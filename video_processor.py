@@ -1,0 +1,970 @@
+"""
+Video processor - handles all FFmpeg operations for video processing
+"""
+import subprocess
+import json
+import os
+import uuid
+import re
+from pathlib import Path
+from typing import Optional, Callable
+from dataclasses import dataclass, field
+from config import FFMPEG_PATH, FFPROBE_PATH, TEMP_DIR, OUTPUT_DIR, OUTPUT_PRESETS, TRANSITIONS, HW_ENCODERS
+
+
+@dataclass
+class VideoInfo:
+    """Video file information"""
+    path: str
+    duration: float
+    width: int
+    height: int
+    fps: float
+    codec: str
+    bitrate: Optional[int] = None
+    audio_codec: Optional[str] = None
+    audio_bitrate: Optional[int] = None
+    has_audio: bool = True
+
+
+@dataclass
+class ProcessingJob:
+    """Represents a video processing job"""
+    id: str
+    status: str = "pending"  # pending, processing, completed, failed, cancelled
+    progress: float = 0.0
+    current_step: str = ""
+    total_steps: int = 0
+    current_step_num: int = 0
+    output_files: list = field(default_factory=list)
+    error: Optional[str] = None
+    cancelled: bool = False
+
+
+class VideoProcessor:
+    """Handles all video processing operations"""
+    
+    def __init__(self):
+        self.jobs: dict[str, ProcessingJob] = {}
+        self.available_encoders = self._detect_hw_encoders()
+        print(f"[VideoProcessor] Available encoders: {list(self.available_encoders.keys())}")
+    
+    def _detect_hw_encoders(self) -> dict:
+        """Detect available hardware encoders"""
+        available = {}
+        
+        for encoder_id, encoder_config in HW_ENCODERS.items():
+            if encoder_config.get("test_cmd") is None:
+                # Software encoder always available
+                available[encoder_id] = encoder_config
+                continue
+            
+            try:
+                result = subprocess.run(
+                    encoder_config["test_cmd"],
+                    capture_output=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    available[encoder_id] = encoder_config
+                    print(f"[VideoProcessor] Hardware encoder available: {encoder_config['name']}")
+            except Exception as e:
+                print(f"[VideoProcessor] Hardware encoder not available ({encoder_id}): {e}")
+        
+        return available
+    
+    def get_available_encoders(self) -> list:
+        """Return list of available encoders for frontend"""
+        return [
+            {"id": eid, "name": cfg["name"]}
+            for eid, cfg in self.available_encoders.items()
+        ]
+    
+    def get_video_info(self, file_path: str) -> Optional[VideoInfo]:
+        """Get video file information using ffprobe"""
+        try:
+            cmd = [
+                FFPROBE_PATH,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                file_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            
+            # Find video stream
+            video_stream = None
+            audio_stream = None
+            
+            for stream in data.get('streams', []):
+                if stream.get('codec_type') == 'video' and not video_stream:
+                    video_stream = stream
+                elif stream.get('codec_type') == 'audio' and not audio_stream:
+                    audio_stream = stream
+            
+            if not video_stream:
+                return None
+            
+            # Parse FPS
+            fps_str = video_stream.get('r_frame_rate', '30/1')
+            if '/' in fps_str:
+                num, den = fps_str.split('/')
+                fps = float(num) / float(den) if float(den) != 0 else 30.0
+            else:
+                fps = float(fps_str)
+            
+            # Get duration
+            duration = float(data.get('format', {}).get('duration', 0))
+            
+            return VideoInfo(
+                path=file_path,
+                duration=duration,
+                width=int(video_stream.get('width', 0)),
+                height=int(video_stream.get('height', 0)),
+                fps=fps,
+                codec=video_stream.get('codec_name', 'unknown'),
+                bitrate=int(data.get('format', {}).get('bit_rate', 0)) if data.get('format', {}).get('bit_rate') else None,
+                audio_codec=audio_stream.get('codec_name') if audio_stream else None,
+                audio_bitrate=int(audio_stream.get('bit_rate', 0)) if audio_stream and audio_stream.get('bit_rate') else None,
+                has_audio=audio_stream is not None
+            )
+        except Exception as e:
+            print(f"Error getting video info: {e}")
+            return None
+    
+    def _get_scale_filter(self, target_w: int, target_h: int, mode: str = "fit") -> str:
+        """
+        Get FFmpeg scale filter for target resolution.
+        
+        Modes:
+        - "fit": Scale to fit inside target, letterbox with black bars if aspect differs (no cropping, no stretch)
+        - "fill": Scale to fill target, crop if necessary (no black bars, no stretch)
+        - "cover": Scale to cover target area, may extend beyond (for overlays)
+        
+        All modes preserve aspect ratio - NO STRETCHING ever.
+        """
+        if mode == "fill":
+            # Scale to fill and crop if needed (crop from center)
+            return f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}"
+        elif mode == "cover":
+            # Scale to cover the area (for transparent overlays)
+            return f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase"
+        else:  # "fit" - default
+            # Scale to fit inside, pad with black bars if needed
+            return f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black"
+    
+    def _get_overlay_scale_filter(self, target_w: int, target_h: int) -> str:
+        """
+        Get FFmpeg scale filter for overlay content (intro/outro/subscribe).
+        Overlays should fill the frame completely - scale to cover then crop to exact size.
+        """
+        return f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}"
+    
+    def create_job(self) -> ProcessingJob:
+        """Create a new processing job"""
+        job_id = str(uuid.uuid4())[:8].upper()
+        job = ProcessingJob(id=job_id)
+        self.jobs[job_id] = job
+        return job
+    
+    def get_job(self, job_id: str) -> Optional[ProcessingJob]:
+        """Get a processing job by ID"""
+        return self.jobs.get(job_id)
+    
+    def cancel_job(self, job_id: str) -> bool:
+        """Cancel a processing job"""
+        job = self.jobs.get(job_id)
+        if job and job.status == "processing":
+            job.cancelled = True
+            job.status = "cancelled"
+            return True
+        return False
+    
+    def _get_encoder_args(self, encoder_id: str, preset_config: dict) -> list:
+        """Build encoder arguments based on selected encoder"""
+        encoder = self.available_encoders.get(encoder_id, self.available_encoders.get("software"))
+        
+        if not encoder:
+            # Fallback to software
+            encoder = HW_ENCODERS["software"]
+        
+        args = ["-c:v", encoder["codec"]]
+        
+        if encoder_id == "nvenc" and "nvenc" in self.available_encoders:
+            # NVIDIA NVENC settings
+            args.extend(["-preset", encoder.get("preset", "p4")])
+            args.extend(encoder.get("extra_args", []))
+        elif encoder_id == "qsv" and "qsv" in self.available_encoders:
+            # Intel QuickSync settings
+            args.extend(["-preset", encoder.get("preset", "medium")])
+            args.extend(encoder.get("extra_args", []))
+        elif encoder_id == "amf" and "amf" in self.available_encoders:
+            # AMD AMF settings
+            args.extend(["-quality", encoder.get("preset", "balanced")])
+            args.extend(encoder.get("extra_args", []))
+        else:
+            # Software encoding (libx264)
+            if preset_config.get("preset"):
+                args.extend(["-preset", preset_config["preset"]])
+            if preset_config.get("crf"):
+                args.extend(["-crf", str(preset_config["crf"])])
+        
+        return args
+    
+    def _run_ffmpeg(self, cmd: list, job: ProcessingJob, duration: float, progress_callback: Optional[Callable] = None):
+        """Run FFmpeg command with progress tracking"""
+        import threading
+        import queue
+        
+        # Add progress reporting to stderr (not stdout, to avoid pipe issues)
+        cmd_with_progress = cmd + ["-progress", "pipe:2", "-nostats"]
+        
+        print(f"[FFmpeg] Running: {' '.join(cmd_with_progress)}")  # Debug log
+        
+        process = subprocess.Popen(
+            cmd_with_progress,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        # Read stderr in a separate thread to avoid blocking
+        stderr_lines = []
+        stderr_queue = queue.Queue()
+        
+        def read_stderr():
+            try:
+                for line in process.stderr:
+                    stderr_queue.put(line)
+                    stderr_lines.append(line)
+            except:
+                pass
+        
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stderr_thread.start()
+        
+        # Process stderr for progress updates
+        while True:
+            if job.cancelled:
+                process.terminate()
+                raise Exception("Job cancelled by user")
+            
+            try:
+                line = stderr_queue.get(timeout=0.1)
+            except queue.Empty:
+                if process.poll() is not None:
+                    break
+                continue
+            
+            if line.startswith("out_time_ms="):
+                try:
+                    time_ms = int(line.split("=")[1])
+                    current_time = time_ms / 1_000_000
+                    progress = min(current_time / duration * 100, 100) if duration > 0 else 0
+                    job.progress = progress
+                    print(f"[FFmpeg] Progress: {progress:.1f}%")  # Debug log
+                    if progress_callback:
+                        progress_callback(progress)
+                except ValueError:
+                    pass
+        
+        # Wait for stderr thread to finish
+        stderr_thread.join(timeout=2)
+        
+        # Read any remaining stdout
+        stdout_output = process.stdout.read()
+        
+        if process.returncode != 0:
+            error_msg = "".join(stderr_lines) if stderr_lines else "Unknown FFmpeg error"
+            print(f"[FFmpeg] Error: {error_msg}")  # Debug log
+            raise Exception(f"FFmpeg error: {error_msg}")
+    
+    def concatenate_videos(self, video_paths: list[str], output_path: str, job: ProcessingJob,
+                          transition: str = "cut", transition_duration: float = 1.0,
+                          preset: str = "youtube_1080p", trim_map: dict = None,
+                          encoder: str = "software") -> str:
+        """Concatenate multiple videos with optional transitions and trim settings"""
+        if not video_paths:
+            raise ValueError("No video files provided")
+        
+        trim_map = trim_map or {}
+        
+        # Get total duration (accounting for trim)
+        total_duration = 0
+        video_infos = []
+        for path in video_paths:
+            info = self.get_video_info(path)
+            if info:
+                video_infos.append(info)
+                # Get trim values for this video
+                trim = trim_map.get(path, {})
+                trim_start = float(trim.get('trim_start', 0))
+                trim_end = float(trim.get('trim_end', 0))
+                # Calculate effective duration after trim
+                effective_duration = max(0, info.duration - trim_start - trim_end)
+                total_duration += effective_duration
+        
+        if not video_infos:
+            raise ValueError("Could not get info for any video files")
+        
+        preset_config = OUTPUT_PRESETS.get(preset, OUTPUT_PRESETS["youtube_1080p"])
+        
+        if transition == "cut" or len(video_paths) == 1:
+            return self._concat_cut(video_paths, output_path, job, preset_config, total_duration, trim_map, encoder)
+        else:
+            return self._concat_with_transition(video_paths, output_path, job, transition, 
+                                                transition_duration, preset_config, total_duration, trim_map, encoder)
+    
+    def _concat_cut(self, video_paths: list[str], output_path: str, job: ProcessingJob, 
+                    preset_config: dict, total_duration: float, trim_map: dict = None,
+                    encoder: str = "software") -> str:
+        """Concatenate videos with simple cut (no transition), applying trim settings"""
+        trim_map = trim_map or {}
+        
+        target_w = preset_config.get("width", 1920)
+        target_h = preset_config.get("height", 1080)
+        
+        # Check if any trim is needed
+        has_trim = any(
+            float(trim_map.get(p, {}).get('trim_start', 0)) > 0 or 
+            float(trim_map.get(p, {}).get('trim_end', 0)) > 0 
+            for p in video_paths
+        )
+        
+        if preset_config.get("codec") == "copy" and len(video_paths) == 1 and not has_trim:
+            # Simple copy for single video without trim
+            cmd = [FFMPEG_PATH, "-y", "-i", video_paths[0], "-c", "copy", output_path]
+            self._run_ffmpeg(cmd, job, total_duration)
+            return output_path
+        
+        # Build inputs with trim applied via -ss and -t
+        inputs = []
+        input_durations = []
+        for path in video_paths:
+            info = self.get_video_info(path)
+            trim = trim_map.get(path, {})
+            trim_start = float(trim.get('trim_start', 0))
+            trim_end = float(trim.get('trim_end', 0))
+            
+            # Calculate actual duration after trim
+            actual_duration = info.duration - trim_start - trim_end if info else 0
+            input_durations.append(max(0, actual_duration))
+            
+            # Add input with trim
+            if trim_start > 0:
+                inputs.extend(["-ss", str(trim_start)])
+            inputs.extend(["-i", path])
+        
+        # Build filter complex to normalize all inputs to same resolution
+        n = len(video_paths)
+        scale_filter = self._get_scale_filter(target_w, target_h, mode="fit")
+        
+        # Scale and normalize all inputs, applying trim_end via trim filter
+        filter_parts = []
+        for i in range(n):
+            path = video_paths[i]
+            info = self.get_video_info(path)
+            trim = trim_map.get(path, {})
+            trim_end = float(trim.get('trim_end', 0))
+            
+            video_filter = f"[{i}:v]{scale_filter},setsar=1,fps=30"
+            audio_filter = f"[{i}:a]aresample=async=1"
+            
+            # Apply trim_end via trim filter if needed
+            if trim_end > 0 and info:
+                duration = input_durations[i]
+                if duration > 0:
+                    video_filter += f",trim=duration={duration},setpts=PTS-STARTPTS"
+                    audio_filter += f",atrim=duration={duration},asetpts=PTS-STARTPTS"
+            
+            filter_parts.append(f"{video_filter}[v{i}]")
+            filter_parts.append(f"{audio_filter}[a{i}]")
+        
+        # Concatenate all scaled videos
+        concat_inputs = "".join([f"[v{i}]" for i in range(n)])
+        filter_parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
+        
+        # Handle audio - concat all audio streams (using the processed audio labels)
+        audio_concat = "".join([f"[a{i}]" for i in range(n)])
+        filter_parts.append(f"{audio_concat}concat=n={n}:v=0:a=1[aout]")
+        
+        filter_complex = ";".join(filter_parts)
+        
+        try:
+            cmd = [FFMPEG_PATH, "-y"] + inputs + ["-filter_complex", filter_complex]
+            
+            # Map outputs
+            cmd.extend(["-map", "[vout]", "-map", "[aout]"])
+            
+            # Video encoding (use hardware acceleration if selected)
+            encoder_args = self._get_encoder_args(encoder, preset_config)
+            cmd.extend(encoder_args)
+            
+            # Audio encoding
+            cmd.extend(["-c:a", preset_config.get("audio_codec", "aac")])
+            if preset_config.get("audio_bitrate"):
+                cmd.extend(["-b:a", preset_config["audio_bitrate"]])
+            
+            cmd.append(output_path)
+            
+            self._run_ffmpeg(cmd, job, total_duration)
+            
+            return output_path
+        except Exception as e:
+            raise Exception(f"Failed to concatenate videos: {e}")
+    
+    def _concat_with_transition(self, video_paths: list[str], output_path: str, job: ProcessingJob,
+                                transition: str, transition_duration: float, preset_config: dict, 
+                                total_duration: float, trim_map: dict = None,
+                                encoder: str = "software") -> str:
+        """Concatenate videos with transitions using complex filtergraph, with trim support"""
+        trim_map = trim_map or {}
+        n = len(video_paths)
+        
+        # Build input arguments with trim_start via -ss
+        inputs = []
+        input_durations = []
+        for path in video_paths:
+            info = self.get_video_info(path)
+            trim = trim_map.get(path, {})
+            trim_start = float(trim.get('trim_start', 0))
+            trim_end = float(trim.get('trim_end', 0))
+            
+            # Calculate actual duration after trim
+            actual_duration = info.duration - trim_start - trim_end if info else 0
+            input_durations.append(max(0, actual_duration))
+            
+            # Add input with trim_start
+            if trim_start > 0:
+                inputs.extend(["-ss", str(trim_start)])
+            inputs.extend(["-i", path])
+        
+        # Build filter complex
+        filter_parts = []
+        
+        # Scale all inputs to same size - use FIT mode (no stretch, letterbox if needed)
+        target_w = preset_config.get("width", 1920)
+        target_h = preset_config.get("height", 1080)
+        scale_filter = self._get_scale_filter(target_w, target_h, mode="fit")
+        
+        for i in range(n):
+            path = video_paths[i]
+            trim = trim_map.get(path, {})
+            trim_end = float(trim.get('trim_end', 0))
+            
+            video_filter = f"[{i}:v]{scale_filter},setsar=1,fps=30"
+            audio_filter = f"[{i}:a]aresample=async=1:first_pts=0"
+            
+            # Apply trim_end if needed
+            if trim_end > 0 and input_durations[i] > 0:
+                video_filter += f",trim=duration={input_durations[i]},setpts=PTS-STARTPTS"
+                audio_filter += f",atrim=duration={input_durations[i]},asetpts=PTS-STARTPTS"
+            
+            filter_parts.append(f"{video_filter}[v{i}];")
+            filter_parts.append(f"{audio_filter}[a{i}];")
+        
+        # Apply transitions
+        if transition == "crossfade":
+            # Crossfade between each pair
+            prev_v = "v0"
+            prev_a = "a0"
+            offset = 0
+            
+            for i in range(1, n):
+                curr_v = f"v{i}"
+                curr_a = f"a{i}"
+                out_v = f"vout{i}" if i < n - 1 else "vfinal"
+                out_a = f"aout{i}" if i < n - 1 else "afinal"
+                
+                # Use trimmed duration for offset calculation
+                offset += input_durations[i-1] - transition_duration
+                
+                filter_parts.append(f"[{prev_v}][{curr_v}]xfade=transition=fade:duration={transition_duration}:offset={offset}[{out_v}];")
+                filter_parts.append(f"[{prev_a}][{curr_a}]acrossfade=d={transition_duration}[{out_a}];")
+                
+                prev_v = out_v
+                prev_a = out_a
+        
+        elif transition == "fade_black":
+            prev_v = "v0"
+            prev_a = "a0"
+            offset = 0
+            
+            for i in range(1, n):
+                curr_v = f"v{i}"
+                curr_a = f"a{i}"
+                out_v = f"vout{i}" if i < n - 1 else "vfinal"
+                out_a = f"aout{i}" if i < n - 1 else "afinal"
+                
+                # Use trimmed duration for offset calculation
+                offset += input_durations[i-1] - transition_duration
+                
+                filter_parts.append(f"[{prev_v}][{curr_v}]xfade=transition=fadeblack:duration={transition_duration}:offset={offset}[{out_v}];")
+                filter_parts.append(f"[{prev_a}][{curr_a}]acrossfade=d={transition_duration}[{out_a}];")
+                
+                prev_v = out_v
+                prev_a = out_a
+        
+        elif transition == "dip_white":
+            prev_v = "v0"
+            prev_a = "a0"
+            offset = 0
+            
+            for i in range(1, n):
+                curr_v = f"v{i}"
+                curr_a = f"a{i}"
+                out_v = f"vout{i}" if i < n - 1 else "vfinal"
+                out_a = f"aout{i}" if i < n - 1 else "afinal"
+                
+                # Use trimmed duration for offset calculation
+                offset += input_durations[i-1] - transition_duration
+                
+                filter_parts.append(f"[{prev_v}][{curr_v}]xfade=transition=fadewhite:duration={transition_duration}:offset={offset}[{out_v}];")
+                filter_parts.append(f"[{prev_a}][{curr_a}]acrossfade=d={transition_duration}[{out_a}];")
+                
+                prev_v = out_v
+                prev_a = out_a
+        
+        filter_complex = "".join(filter_parts)
+        # Remove trailing semicolon
+        if filter_complex.endswith(";"):
+            filter_complex = filter_complex[:-1]
+        
+        cmd = [FFMPEG_PATH, "-y"] + inputs
+        cmd.extend(["-filter_complex", filter_complex])
+        cmd.extend(["-map", "[vfinal]", "-map", "[afinal]"])
+        
+        # Output encoding (use hardware acceleration if selected)
+        encoder_args = self._get_encoder_args(encoder, preset_config)
+        cmd.extend(encoder_args)
+        cmd.extend(["-c:a", preset_config.get("audio_codec", "aac")])
+        if preset_config.get("audio_bitrate"):
+            cmd.extend(["-b:a", preset_config["audio_bitrate"]])
+        
+        cmd.append(output_path)
+        
+        adjusted_duration = total_duration - (transition_duration * (n - 1))
+        self._run_ffmpeg(cmd, job, adjusted_duration)
+        
+        return output_path
+    
+    def split_into_episodes(self, video_path: str, job: ProcessingJob,
+                           episode_duration: float = 3600,
+                           overlap_seconds: float = 30,
+                           preset: str = "youtube_1080p",
+                           output_prefix: str = "Episode") -> list[str]:
+        """Split a video into episodes with overlap"""
+        video_info = self.get_video_info(video_path)
+        if not video_info:
+            raise ValueError("Could not get video info")
+        
+        total_duration = video_info.duration
+        preset_config = OUTPUT_PRESETS.get(preset, OUTPUT_PRESETS["youtube_1080p"])
+        
+        # Calculate episodes
+        episodes = []
+        current_time = 0
+        episode_num = 1
+        
+        while current_time < total_duration:
+            start_time = current_time
+            end_time = min(start_time + episode_duration, total_duration)
+            
+            # For last episode, check if remaining is too short
+            remaining = total_duration - start_time
+            if remaining < episode_duration:
+                # If very short, extend overlap from previous
+                if remaining < episode_duration * 0.3 and episode_num > 1:
+                    # Add more overlap to previous episode end
+                    end_time = total_duration
+                else:
+                    # Just make it bigger
+                    end_time = total_duration
+            
+            episodes.append({
+                "num": episode_num,
+                "start": start_time,
+                "end": end_time,
+                "duration": end_time - start_time
+            })
+            
+            # Next episode starts with overlap
+            if end_time < total_duration:
+                current_time = end_time - overlap_seconds
+            else:
+                break
+            
+            episode_num += 1
+        
+        # Process each episode
+        output_files = []
+        job.total_steps = len(episodes)
+        
+        for i, ep in enumerate(episodes):
+            if job.cancelled:
+                break
+            
+            job.current_step = f"Processing {output_prefix} {ep['num']}"
+            job.current_step_num = i + 1
+            
+            output_path = str(OUTPUT_DIR / f"{output_prefix}_{ep['num']:02d}.mp4")
+            
+            target_w = preset_config.get("width", 1920)
+            target_h = preset_config.get("height", 1080)
+            scale_filter = self._get_scale_filter(target_w, target_h, mode="fit")
+            
+            cmd = [
+                FFMPEG_PATH, "-y",
+                "-ss", str(ep["start"]),
+                "-i", video_path,
+                "-t", str(ep["duration"])
+            ]
+            
+            if preset_config.get("codec") == "copy":
+                cmd.extend(["-c", "copy"])
+            else:
+                cmd.extend(["-c:v", preset_config["codec"]])
+                if preset_config.get("preset"):
+                    cmd.extend(["-preset", preset_config["preset"]])
+                if preset_config.get("crf"):
+                    cmd.extend(["-crf", str(preset_config["crf"])])
+                if preset_config.get("width") and preset_config.get("height"):
+                    cmd.extend(["-vf", scale_filter])
+                cmd.extend(["-c:a", preset_config.get("audio_codec", "aac")])
+                if preset_config.get("audio_bitrate"):
+                    cmd.extend(["-b:a", preset_config["audio_bitrate"]])
+            
+            cmd.append(output_path)
+            
+            self._run_ffmpeg(cmd, job, ep["duration"])
+            output_files.append(output_path)
+        
+        return output_files
+    
+    def apply_overlay(self, video_path: str, overlay_path: str, output_path: str,
+                     job: ProcessingJob, start_time: float = 0, 
+                     overlay_has_audio: bool = True, preset: str = "youtube_1080p") -> str:
+        """Apply a transparent overlay to video at specified time"""
+        video_info = self.get_video_info(video_path)
+        overlay_info = self.get_video_info(overlay_path)
+        
+        if not video_info or not overlay_info:
+            raise ValueError("Could not get video info")
+        
+        preset_config = OUTPUT_PRESETS.get(preset, OUTPUT_PRESETS["youtube_1080p"])
+        target_w = preset_config.get("width") or video_info.width
+        target_h = preset_config.get("height") or video_info.height
+        
+        # Scale filters - FIT for base, FILL for overlay
+        scale_filter = self._get_scale_filter(target_w, target_h, mode="fit")
+        overlay_scale = self._get_overlay_scale_filter(target_w, target_h)
+        
+        # Build filter for overlay
+        filter_complex = f"[0:v]{scale_filter},setsar=1[base];[1:v]format=rgba,{overlay_scale}[ovr];[base][ovr]overlay=0:0:enable='between(t,{start_time},{start_time + overlay_info.duration})'"
+        
+        cmd = [
+            FFMPEG_PATH, "-y",
+            "-i", video_path,
+            "-i", overlay_path,
+            "-filter_complex", filter_complex
+        ]
+        
+        # Handle audio mixing if overlay has audio
+        if overlay_has_audio and overlay_info.has_audio:
+            audio_filter = f"[1:a]adelay={int(start_time * 1000)}|{int(start_time * 1000)}[aud];[0:a][aud]amix=inputs=2:duration=first"
+            cmd[-1] = f"{filter_complex};{audio_filter}"
+        
+        # Output encoding
+        cmd.extend(["-c:v", preset_config["codec"]])
+        if preset_config.get("preset"):
+            cmd.extend(["-preset", preset_config["preset"]])
+        if preset_config.get("crf"):
+            cmd.extend(["-crf", str(preset_config["crf"])])
+        cmd.extend(["-c:a", preset_config.get("audio_codec", "aac")])
+        if preset_config.get("audio_bitrate"):
+            cmd.extend(["-b:a", preset_config["audio_bitrate"]])
+        
+        cmd.append(output_path)
+        
+        self._run_ffmpeg(cmd, job, video_info.duration)
+        
+        return output_path
+    
+    def apply_intro_outro_overlays(self, video_path: str, output_path: str, job: ProcessingJob,
+                                   intro_path: Optional[str] = None, intro_overlap: float = 0,
+                                   intro_full_overlap: bool = False,
+                                   outro_path: Optional[str] = None, outro_overlap: float = 0,
+                                   outro_full_overlap: bool = False,
+                                   preset: str = "youtube_1080p",
+                                   encoder: str = "software") -> str:
+        """
+        Apply intro and outro to video.
+        
+        Modes:
+        - full_overlap=True OR overlap > 0: Overlay on top of video (transparent overlay)
+        - full_overlap=False AND overlap=0: Concatenate (append/prepend) to video
+        """
+        video_info = self.get_video_info(video_path)
+        if not video_info:
+            raise ValueError("Could not get video info")
+        
+        preset_config = OUTPUT_PRESETS.get(preset, OUTPUT_PRESETS["youtube_1080p"])
+        target_w = preset_config.get("width") or video_info.width
+        target_h = preset_config.get("height") or video_info.height
+        
+        # Determine which method to use for intro and outro
+        intro_mode = "overlay" if (intro_full_overlap or intro_overlap > 0) else "concat"
+        outro_mode = "overlay" if (outro_full_overlap or outro_overlap > 0) else "concat"
+        
+        # If both are concat mode, we can use simple concatenation
+        # If any is overlay mode, we need complex filter
+        
+        intro_info = self.get_video_info(intro_path) if intro_path else None
+        outro_info = self.get_video_info(outro_path) if outro_path else None
+        
+        # Determine total expected duration
+        total_duration = video_info.duration
+        if intro_info and intro_mode == "concat":
+            total_duration += intro_info.duration
+        if outro_info and outro_mode == "concat":
+            total_duration += outro_info.duration
+        
+        # Build the filter complex
+        inputs = []
+        input_map = {}  # Maps logical name to input index
+        
+        current_input_idx = 0
+        
+        # Collect all inputs
+        videos_to_concat_before = []
+        videos_to_concat_after = []
+        
+        # Add intro as concat if needed
+        if intro_path and intro_mode == "concat":
+            inputs.extend(["-i", intro_path])
+            videos_to_concat_before.append(current_input_idx)
+            input_map["intro"] = current_input_idx
+            current_input_idx += 1
+        
+        # Add main video
+        inputs.extend(["-i", video_path])
+        input_map["main"] = current_input_idx
+        current_input_idx += 1
+        
+        # Add intro as overlay if needed (after main video in inputs)
+        if intro_path and intro_mode == "overlay":
+            inputs.extend(["-i", intro_path])
+            input_map["intro_overlay"] = current_input_idx
+            current_input_idx += 1
+        
+        # Add outro as concat if needed
+        if outro_path and outro_mode == "concat":
+            inputs.extend(["-i", outro_path])
+            videos_to_concat_after.append(current_input_idx)
+            input_map["outro"] = current_input_idx
+            current_input_idx += 1
+        
+        # Add outro as overlay if needed (after everything else)
+        if outro_path and outro_mode == "overlay":
+            inputs.extend(["-i", outro_path])
+            input_map["outro_overlay"] = current_input_idx
+            current_input_idx += 1
+        
+        filter_parts = []
+        scale_filter = self._get_scale_filter(target_w, target_h, mode="fit")
+        overlay_scale = self._get_overlay_scale_filter(target_w, target_h)
+        
+        # Process intro concat videos
+        concat_video_labels = []
+        concat_audio_labels = []
+        
+        for idx in videos_to_concat_before:
+            filter_parts.append(f"[{idx}:v]{scale_filter},setsar=1,fps=30[cv{idx}]")
+            filter_parts.append(f"[{idx}:a]aresample=async=1[ca{idx}]")
+            concat_video_labels.append(f"[cv{idx}]")
+            concat_audio_labels.append(f"[ca{idx}]")
+        
+        # Process main video
+        main_idx = input_map["main"]
+        filter_parts.append(f"[{main_idx}:v]{scale_filter},setsar=1,fps=30[mainv]")
+        filter_parts.append(f"[{main_idx}:a]aresample=async=1[maina]")
+        main_video_label = "mainv"
+        main_audio_label = "maina"
+        
+        # Apply intro overlay if needed (on top of main video)
+        if intro_path and intro_mode == "overlay":
+            intro_idx = input_map["intro_overlay"]
+            intro_start = 0
+            filter_parts.append(f"[{intro_idx}:v]format=rgba,{overlay_scale}[introv]")
+            filter_parts.append(f"[{main_video_label}][introv]overlay=0:0:enable='between(t,{intro_start},{intro_info.duration})'[withintro]")
+            main_video_label = "withintro"
+            
+            # Mix intro audio
+            if intro_info.has_audio:
+                filter_parts.append(f"[{intro_idx}:a]aresample=async=1[introa]")
+                filter_parts.append(f"[{main_audio_label}][introa]amix=inputs=2:duration=first:dropout_transition=2[withintroaudio]")
+                main_audio_label = "withintroaudio"
+        
+        # Apply outro overlay if needed (on top of main video)
+        if outro_path and outro_mode == "overlay":
+            outro_idx = input_map["outro_overlay"]
+            # Outro starts X seconds before end
+            outro_start = video_info.duration - outro_overlap - outro_info.duration
+            if outro_start < 0:
+                outro_start = video_info.duration - outro_info.duration
+            
+            filter_parts.append(f"[{outro_idx}:v]format=rgba,{overlay_scale}[outrov]")
+            filter_parts.append(f"[{main_video_label}][outrov]overlay=0:0:enable='between(t,{outro_start},{outro_start + outro_info.duration})'[withoutro]")
+            main_video_label = "withoutro"
+            
+            # Mix outro audio
+            if outro_info.has_audio:
+                delay_ms = int(outro_start * 1000)
+                filter_parts.append(f"[{outro_idx}:a]adelay={delay_ms}|{delay_ms},aresample=async=1[outroa]")
+                filter_parts.append(f"[{main_audio_label}][outroa]amix=inputs=2:duration=first:dropout_transition=2[withoutroaudio]")
+                main_audio_label = "withoutroaudio"
+        
+        # Add processed main video to concat list
+        concat_video_labels.append(f"[{main_video_label}]")
+        concat_audio_labels.append(f"[{main_audio_label}]")
+        
+        # Process outro concat videos
+        for idx in videos_to_concat_after:
+            filter_parts.append(f"[{idx}:v]{scale_filter},setsar=1,fps=30[cv{idx}]")
+            filter_parts.append(f"[{idx}:a]aresample=async=1[ca{idx}]")
+            concat_video_labels.append(f"[cv{idx}]")
+            concat_audio_labels.append(f"[ca{idx}]")
+        
+        # Concatenate all video and audio streams
+        n_concat = len(concat_video_labels)
+        if n_concat > 1:
+            concat_v = "".join(concat_video_labels)
+            concat_a = "".join(concat_audio_labels)
+            filter_parts.append(f"{concat_v}concat=n={n_concat}:v=1:a=0[finalv]")
+            filter_parts.append(f"{concat_a}concat=n={n_concat}:v=0:a=1[finala]")
+            final_video = "finalv"
+            final_audio = "finala"
+        else:
+            final_video = main_video_label
+            final_audio = main_audio_label
+        
+        filter_complex = ";".join(filter_parts)
+        
+        cmd = [FFMPEG_PATH, "-y"] + inputs
+        cmd.extend(["-filter_complex", filter_complex])
+        cmd.extend(["-map", f"[{final_video}]", "-map", f"[{final_audio}]"])
+        
+        # Output encoding (use hardware acceleration if selected)
+        encoder_args = self._get_encoder_args(encoder, preset_config)
+        cmd.extend(encoder_args)
+        cmd.extend(["-c:a", preset_config.get("audio_codec", "aac")])
+        if preset_config.get("audio_bitrate"):
+            cmd.extend(["-b:a", preset_config["audio_bitrate"]])
+        
+        cmd.append(output_path)
+        
+        self._run_ffmpeg(cmd, job, total_duration)
+        
+        return output_path
+    
+    def apply_subscribe_graphics(self, video_path: str, subscribe_path: str, output_path: str,
+                                 job: ProcessingJob, interval_seconds: float = 300,
+                                 duration_seconds: float = 8, preset: str = "youtube_1080p") -> str:
+        """Apply subscribe graphics at regular intervals"""
+        video_info = self.get_video_info(video_path)
+        subscribe_info = self.get_video_info(subscribe_path)
+        
+        if not video_info or not subscribe_info:
+            raise ValueError("Could not get video info")
+        
+        preset_config = OUTPUT_PRESETS.get(preset, OUTPUT_PRESETS["youtube_1080p"])
+        
+        # Calculate appearance times
+        appearances = []
+        current_time = interval_seconds
+        while current_time < video_info.duration - duration_seconds:
+            appearances.append(current_time)
+            current_time += interval_seconds
+        
+        if not appearances:
+            # Just copy the video
+            import shutil
+            shutil.copy2(video_path, output_path)
+            return output_path
+        
+        target_w = preset_config.get("width") or video_info.width
+        target_h = preset_config.get("height") or video_info.height
+        
+        # Build enable expression for all appearances
+        enable_expr = " + ".join([f"between(t,{t},{t + duration_seconds})" for t in appearances])
+        
+        # Scale filters - FIT for base video, FILL for overlay
+        scale_filter = self._get_scale_filter(target_w, target_h, mode="fit")
+        overlay_scale = self._get_overlay_scale_filter(target_w, target_h)
+        
+        filter_parts = []
+        filter_parts.append(f"[0:v]{scale_filter},setsar=1[base]")
+        filter_parts.append(f"[1:v]format=rgba,{overlay_scale}[sub]")
+        filter_parts.append(f"[base][sub]overlay=0:0:enable='{enable_expr}'[vout]")
+        
+        filter_complex = ";".join(filter_parts)
+        
+        # Audio mixing for subscribe sound at each appearance
+        audio_filters = []
+        if subscribe_info.has_audio:
+            delays = []
+            for t in appearances:
+                delay_ms = int(t * 1000)
+                delays.append(f"adelay={delay_ms}|{delay_ms}")
+            
+            # Create delayed copies of subscribe audio
+            audio_inputs = []
+            for i, t in enumerate(appearances):
+                delay_ms = int(t * 1000)
+                audio_filters.append(f"[1:a]adelay={delay_ms}|{delay_ms}[suba{i}]")
+                audio_inputs.append(f"[suba{i}]")
+            
+            # Mix all audio
+            if audio_inputs:
+                mix_inputs = "[0:a]" + "".join(audio_inputs)
+                audio_filters.append(f"{mix_inputs}amix=inputs={len(appearances) + 1}:duration=first[aout]")
+                filter_complex += ";" + ";".join(audio_filters)
+        
+        cmd = [
+            FFMPEG_PATH, "-y",
+            "-i", video_path,
+            "-stream_loop", "-1",
+            "-i", subscribe_path,
+            "-filter_complex", filter_complex,
+            "-map", "[vout]"
+        ]
+        
+        if subscribe_info.has_audio and audio_filters:
+            cmd.extend(["-map", "[aout]"])
+        else:
+            cmd.extend(["-map", "0:a"])
+        
+        # Output encoding
+        if preset_config.get("codec") != "copy":
+            cmd.extend(["-c:v", preset_config["codec"]])
+            if preset_config.get("preset"):
+                cmd.extend(["-preset", preset_config["preset"]])
+            if preset_config.get("crf"):
+                cmd.extend(["-crf", str(preset_config["crf"])])
+        cmd.extend(["-c:a", preset_config.get("audio_codec", "aac")])
+        if preset_config.get("audio_bitrate"):
+            cmd.extend(["-b:a", preset_config["audio_bitrate"]])
+        cmd.extend(["-shortest"])
+        
+        cmd.append(output_path)
+        
+        self._run_ffmpeg(cmd, job, video_info.duration)
+        
+        return output_path
+
+
+# Global instance
+video_processor = VideoProcessor()

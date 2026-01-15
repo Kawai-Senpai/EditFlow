@@ -1,0 +1,25 @@
+# IDE and Editor
+.infinitecode
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Application data (auto-generated)
+data/
+temp/
+output/
+
+# OS files
+.DS_Store
+Thumbs.db

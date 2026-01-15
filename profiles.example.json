@@ -1,0 +1,41 @@
+{
+    "profiles": [
+        {
+            "id": "example-gaming-channel",
+            "name": "Gaming Channel",
+            "created_at": "2026-01-15T00:00:00Z",
+            "intro": {
+                "path": "data/profiles/example-gaming-channel/intro.webm",
+                "original_name": "gaming_intro.webm",
+                "overlap_seconds": 2.0,
+                "has_audio": true
+            },
+            "outro": {
+                "path": "data/profiles/example-gaming-channel/outro.webm",
+                "original_name": "gaming_outro.webm",
+                "overlap_seconds": 3.0,
+                "has_audio": true
+            },
+            "subscribe_graphics": {
+                "path": "data/profiles/example-gaming-channel/subscribe.webm",
+                "original_name": "subscribe_popup.webm",
+                "interval_seconds": 300,
+                "duration_seconds": 8,
+                "has_audio": true
+            }
+        },
+        {
+            "id": "example-tutorial-channel",
+            "name": "Tutorial Channel",
+            "created_at": "2026-01-15T00:00:00Z",
+            "intro": {
+                "path": "data/profiles/example-tutorial-channel/intro.mov",
+                "original_name": "tutorial_intro.mov",
+                "overlap_seconds": 0,
+                "has_audio": true
+            },
+            "outro": null,
+            "subscribe_graphics": null
+        }
+    ]
+}
