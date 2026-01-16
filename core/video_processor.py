@@ -197,20 +197,41 @@ class VideoProcessor:
             # Fallback to software
             encoder = HW_ENCODERS["software"]
         
+        quality = preset_config.get("quality")
+        def _apply_quality(args_list: list, flag: str, value: Optional[float]) -> list:
+            if value is None:
+                return args_list
+            if flag in args_list:
+                idx = args_list.index(flag)
+                if idx + 1 < len(args_list):
+                    args_list[idx + 1] = str(value)
+                else:
+                    args_list.append(str(value))
+            else:
+                args_list.extend([flag, str(value)])
+            return args_list
+
         args = ["-c:v", encoder["codec"]]
         
         if encoder_id == "nvenc" and "nvenc" in self.available_encoders:
             # NVIDIA NVENC settings
             args.extend(["-preset", encoder.get("preset", "p4")])
-            args.extend(encoder.get("extra_args", []))
+            nvenc_args = list(encoder.get("extra_args", []))
+            _apply_quality(nvenc_args, "-cq", quality)
+            args.extend(nvenc_args)
         elif encoder_id == "qsv" and "qsv" in self.available_encoders:
             # Intel QuickSync settings
             args.extend(["-preset", encoder.get("preset", "medium")])
-            args.extend(encoder.get("extra_args", []))
+            qsv_args = list(encoder.get("extra_args", []))
+            _apply_quality(qsv_args, "-global_quality", quality)
+            args.extend(qsv_args)
         elif encoder_id == "amf" and "amf" in self.available_encoders:
             # AMD AMF settings
             args.extend(["-quality", encoder.get("preset", "balanced")])
-            args.extend(encoder.get("extra_args", []))
+            amf_args = list(encoder.get("extra_args", []))
+            _apply_quality(amf_args, "-qp_i", quality)
+            _apply_quality(amf_args, "-qp_p", quality)
+            args.extend(amf_args)
         else:
             # Software encoding (libx264)
             if preset_config.get("preset"):
@@ -229,11 +250,18 @@ class VideoProcessor:
         """Run FFmpeg command with progress tracking"""
         import threading
         import queue
+
+        def _format_step() -> str:
+            if job.current_step:
+                if job.total_steps:
+                    return f" | Step {job.current_step_num}/{job.total_steps}: {job.current_step}"
+                return f" | Step: {job.current_step}"
+            return ""
         
         # Add progress reporting to stderr (not stdout, to avoid pipe issues)
         cmd_with_progress = cmd + ["-progress", "pipe:2", "-nostats"]
         
-        print(f"[FFmpeg] Running: {' '.join(cmd_with_progress)}")  # Debug log
+        print(f"[FFmpeg] Running: {' '.join(cmd_with_progress)}{_format_step()}")  # Debug log
         
         process = subprocess.Popen(
             cmd_with_progress,
@@ -258,6 +286,7 @@ class VideoProcessor:
         stderr_thread.start()
         
         # Process stderr for progress updates
+        saw_progress_end = False
         while True:
             if job.cancelled:
                 process.terminate()
@@ -274,13 +303,20 @@ class VideoProcessor:
                 try:
                     time_ms = int(line.split("=")[1])
                     current_time = time_ms / 1_000_000
-                    progress = min(current_time / duration * 100, 100) if duration > 0 else 0
+                    # Avoid reporting 100% until FFmpeg finishes
+                    progress = min(current_time / duration * 100, 99.9) if duration > 0 else 0
                     job.progress = progress
-                    print(f"[FFmpeg] Progress: {progress:.1f}%")  # Debug log
+                    print(f"[FFmpeg] Progress: {progress:.1f}%{_format_step()}")  # Debug log
                     if progress_callback:
                         progress_callback(progress)
                 except ValueError:
                     pass
+            elif line.startswith("progress="):
+                if line.strip() == "progress=end":
+                    saw_progress_end = True
+                    job.progress = 100.0
+                    if progress_callback:
+                        progress_callback(100.0)
         
         # Wait for stderr thread to finish
         stderr_thread.join(timeout=2)
@@ -292,6 +328,10 @@ class VideoProcessor:
             error_msg = "".join(stderr_lines) if stderr_lines else "Unknown FFmpeg error"
             print(f"[FFmpeg] Error: {error_msg}")  # Debug log
             raise Exception(f"FFmpeg error: {error_msg}")
+        if not saw_progress_end:
+            job.progress = 100.0
+            if progress_callback:
+                progress_callback(100.0)
     
     def concatenate_videos(self, video_paths: list[str], output_path: str, job: ProcessingJob,
                           transition: str = "cut", transition_duration: float = 1.0,
@@ -1222,7 +1262,11 @@ class VideoProcessor:
         # Apply subscribe overlay on the full timeline.
         if subscribe_path and appearances:
             subscribe_idx = next_input_index
-            inputs.extend(["-stream_loop", "-1", "-i", subscribe_path])
+            loop_args = ["-stream_loop", "-1"]
+            if total_duration > 0:
+                loop_args.extend(["-t", str(total_duration)])
+            loop_args.extend(["-i", subscribe_path])
+            inputs.extend(loop_args)
             next_input_index += 1
 
             enable_expr = " + ".join(
@@ -1230,7 +1274,7 @@ class VideoProcessor:
             )
             filter_parts.append(f"[{subscribe_idx}:v]format=rgba,{overlay_scale}[sub]")
             filter_parts.append(
-                f"[{timeline_video_label}][sub]overlay=0:0:enable='{enable_expr}'[vsub]"
+                f"[{timeline_video_label}][sub]overlay=0:0:enable='{enable_expr}':shortest=1[vsub]"
             )
             final_video_label = "vsub"
 
@@ -1262,6 +1306,10 @@ class VideoProcessor:
         cmd.extend(["-c:a", audio_codec])
         if audio_codec != "copy" and preset_config.get("audio_bitrate"):
             cmd.extend(["-b:a", preset_config["audio_bitrate"]])
+
+        # If we loop subscribe graphics, force output to stop at the shortest stream
+        if has_subscribe:
+            cmd.extend(["-shortest"])
 
         cmd.append(output_path)
 

@@ -538,7 +538,7 @@ def process_single_video():
     profile_id = data.get('profile_id')
     transition = data.get('transition', 'cut')
     transition_duration = float(data.get('transition_duration', 1.0))
-    preset = data.get('preset', 'youtube_1080p')
+    preset = data.get('preset', 'youtube_1080p_balanced')
     output_name = data.get('output_name', 'output')
     apply_subscribe = data.get('apply_subscribe', False)
     subscribe_interval = float(data.get('subscribe_interval', 300))  # In seconds
@@ -633,7 +633,7 @@ def process_episodic():
     transition_duration = float(data.get('transition_duration', 1.0))
     episode_duration = float(data.get('episode_duration', 3600))  # Default 1 hour
     episode_overlap = float(data.get('episode_overlap', 30))  # Default 30 seconds
-    preset = data.get('preset', 'youtube_1080p')
+    preset = data.get('preset', 'youtube_1080p_balanced')
     output_prefix = data.get('output_prefix', 'Episode')
     apply_subscribe = data.get('apply_subscribe', False)
     

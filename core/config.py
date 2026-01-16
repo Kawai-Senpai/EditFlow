@@ -107,6 +107,32 @@ OUTPUT_PRESETS = {
         "audio_codec": "aac",
         "format": "mp4"
     },
+    "youtube_1080p_balanced": {
+        "name": "YouTube 1080p (Balanced)",
+        "width": 1920,
+        "height": 1080,
+        "bitrate": "8M",
+        "audio_bitrate": "192k",
+        "codec": "libx264",
+        "preset": "veryfast",
+        "crf": 24,
+        "quality": 28,
+        "audio_codec": "aac",
+        "format": "mp4"
+    },
+    "youtube_1080p_small": {
+        "name": "YouTube 1080p (Small)",
+        "width": 1920,
+        "height": 1080,
+        "bitrate": "6M",
+        "audio_bitrate": "160k",
+        "codec": "libx264",
+        "preset": "veryfast",
+        "crf": 26,
+        "quality": 30,
+        "audio_codec": "aac",
+        "format": "mp4"
+    },
     "youtube_720p": {
         "name": "YouTube 720p",
         "width": 1280,
@@ -116,6 +142,19 @@ OUTPUT_PRESETS = {
         "codec": "libx264",
         "preset": "medium",
         "crf": 23,
+        "audio_codec": "aac",
+        "format": "mp4"
+    },
+    "youtube_720p_small": {
+        "name": "YouTube 720p (Small)",
+        "width": 1280,
+        "height": 720,
+        "bitrate": "4M",
+        "audio_bitrate": "128k",
+        "codec": "libx264",
+        "preset": "veryfast",
+        "crf": 26,
+        "quality": 30,
         "audio_codec": "aac",
         "format": "mp4"
     },
