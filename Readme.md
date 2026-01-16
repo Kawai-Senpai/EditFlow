@@ -1,199 +1,197 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/FFmpeg-Required-007808?style=for-the-badge&logo=ffmpeg&logoColor=white" alt="FFmpeg">
   <img src="https://img.shields.io/badge/Flask-Backend-000000?style=for-the-badge&logo=flask&logoColor=white" alt="Flask">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 </p>
 
-<h1 align="center">🎬 Video Script</h1>
+<h1 align="center">⚡ EditFlow</h1>
 
 <p align="center">
-  <strong>A powerful tool for processing gameplay recordings with channel branding</strong>
+  <strong>Professional Video Processing Workflow Tool</strong>
 </p>
 
 <p align="center">
-  Join multiple videos, split into episodes, add intro/outro overlays, and periodic subscribe graphics - all from a clean web interface.
+  A sleek, modern desktop application for processing videos with custom branding, hardware acceleration, and automated workflow features. Perfect for content creators, streamers, and video editors.
 </p>
 
 ---
 
 ## ✨ Features
 
-### 🎯 Processing Modes
+### 🎬 Video Processing
+- **Concatenate multiple videos** with seamless transitions (cut, crossfade, fade to black, dip to white)
+- **Trim videos** - Remove unwanted seconds from start/end of each clip
+- **Episode splitting** - Automatically split long recordings into episodes with configurable overlap
 
-| Mode | Description |
-|------|-------------|
-| **Single Video** | Combine multiple gameplay clips into one seamless video |
-| **Episodic** | Automatically split long recordings into episodes with configurable overlap |
+### 🎨 Branding System
+- **Intro/Outro support** - Prepend or overlay intro/outro clips with your branding
+- **Full overlap mode** - Overlay transparent intros/outros on top of video content
+- **Append mode** - Add intros/outros sequentially before/after main content
+- **Subscribe graphics** - Automated overlay popups at configurable intervals
 
-### 🎨 Channel Branding
+### ⚡ Performance
+- **Hardware acceleration** - Auto-detects NVIDIA NVENC, Intel QuickSync, AMD AMF
+- **Multiple quality presets** - YouTube 4K, 1440p, 1080p, 720p optimized
+- **Real-time progress tracking** - Live encoding progress and detailed status
 
-Create branding presets for different channels with:
-
-- **Intro Overlay** - Transparent video/image that appears at the start with configurable overlap
-- **Outro Overlay** - Transparent video/image that appears before the end
-- **Subscribe Graphics** - Periodic popup reminders at configurable intervals
-
-All overlays support:
-- Transparent video formats (WebM, MOV with alpha)
-- PNG/GIF images
-- Audio mixing options
-- Customizable overlap duration
-
-### 🔄 Transitions
-
-Choose how clips blend together:
-- **Cut** - Instant switch (no transition)
-- **Crossfade** - Smooth blend between clips
-- **Fade to Black** - Professional fade out/in
-- **Dip to White** - Bright flash transition
-
-### 📺 Output Presets
-
-Optimized encoding presets for YouTube:
-- YouTube 4K (2160p)
-- YouTube 1440p
-- YouTube 1080p
-- YouTube 1080p Fast
-- YouTube 720p
-- Original Quality (stream copy)
+### 💾 Workflow
+- **Branding profiles** - Save and reuse branding configurations
+- **Non-destructive** - References original files, no unnecessary copies
+- **Output management** - Browse, preview, and manage rendered outputs
 
 ---
 
-## 🚀 Quick Start
+## 🖥️ Screenshots
+
+<p align="center">
+  <em>Modern dark-themed interface with intuitive controls</em>
+</p>
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
-
-- **Python 3.8+**
-- **FFmpeg** (must be in PATH)
+- **Python 3.10+**
+- **FFmpeg** (with NVENC/QSV support for hardware acceleration)
+- **Tkinter** (usually included with Python)
 
 ### Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/video-script.git
-cd video-script
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/editflow.git
+   cd editflow
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
+2. **Create virtual environment**
+   ```bash
+   python -m venv venv
+   
+   # Windows
+   venv\Scripts\activate
+   
+   # Linux/Mac
+   source venv/bin/activate
+   ```
 
-# Run the application
-python app.py
-```
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Open your browser and navigate to: **http://127.0.0.1:5000**
+4. **Run the application**
+   ```bash
+   python app.py
+   ```
+
+5. **Open in browser**
+   ```
+   http://localhost:5000
+   ```
+
+---
+
+## 📖 Usage Guide
+
+### Basic Workflow
+
+1. **Add Videos** - Drop files or click to browse for video files
+2. **Configure Settings**
+   - Choose transition type (cut, crossfade, fade to black, dip to white)
+   - Select quality preset (4K, 1440p, 1080p, 720p)
+   - Pick encoder (NVENC for fastest rendering)
+   - Set trim values if needed
+3. **Select Branding** - Choose a branding profile (optional)
+4. **Process** - Click "Process Videos" and watch the progress
+
+### Branding Profiles
+
+1. Go to **Branding** tab
+2. Click **+ Add Profile**
+3. Configure your branding elements:
+   - **Intro** - Video to play before main content
+   - **Outro** - Video to play after main content
+   - **Subscribe Popup** - Overlay that appears periodically during the video
+
+### Overlap Modes Explained
+
+| Setting | Behavior |
+|---------|----------|
+| `Full Overlap = ON` | Intro/outro plays **on top** of video (for transparent overlays) |
+| `Full Overlap = OFF`, `Overlap > 0` | Intro/outro overlaps into video by specified seconds |
+| `Full Overlap = OFF`, `Overlap = 0` | Intro/outro is **appended** sequentially (no overlap) |
+
+---
+
+## ⚙️ Configuration
+
+### Hardware Acceleration
+
+EditFlow automatically detects and uses available hardware encoders for faster processing:
+
+| Encoder | GPU Required | Speed | Quality |
+|---------|-------------|-------|---------|
+| **NVENC** | NVIDIA GTX 600+ | ⚡⚡⚡ Fastest | Excellent |
+| **QuickSync** | Intel CPU with iGPU | ⚡⚡ Fast | Good |
+| **AMF** | AMD GPU | ⚡⚡ Fast | Good |
+| **Software** | None | ⚡ Standard | Best |
+
+### Quality Presets
+
+| Preset | Resolution | Bitrate | Best For |
+|--------|------------|---------|----------|
+| YouTube 4K | 3840×2160 | 45 Mbps | Maximum quality uploads |
+| YouTube 1440p | 2560×1440 | 24 Mbps | High quality gaming content |
+| YouTube 1080p | 1920×1080 | 12 Mbps | Standard content (recommended) |
+| YouTube 1080p Fast | 1920×1080 | 12 Mbps | Quick previews |
+| YouTube 720p | 1280×720 | 7.5 Mbps | Faster uploads, limited bandwidth |
+| Original | Source | Source | Stream copy (fastest, no re-encoding) |
 
 ---
 
 ## 📁 Project Structure
 
 ```
-video-script/
-├── app.py                 # Flask API server
-├── config.py              # Configuration and presets
-├── profile_manager.py     # Branding profile management
-├── video_processor.py     # FFmpeg video processing
-├── requirements.txt       # Python dependencies
+editflow/
+├── app.py              # Flask API server
+├── video_processor.py  # FFmpeg processing engine
+├── profile_manager.py  # Branding profiles handler
+├── config.py           # Configuration and presets
 ├── static/
-│   ├── index.html         # Web interface
-│   ├── styles.css         # Styling
-│   └── app.js             # Frontend logic
+│   ├── index.html      # Main UI
+│   ├── app.js          # Frontend logic
+│   └── styles.css      # Dark theme styling
 ├── data/
-│   └── profiles/          # Saved branding profiles
-├── temp/                  # Temporary processing files
-└── output/                # Processed video output
+│   ├── output/         # Rendered videos
+│   ├── profiles/       # Branding profiles JSON
+│   └── temp/           # Temporary processing files
+└── requirements.txt    # Python dependencies
 ```
 
 ---
 
-## 🎮 Usage Guide
+## 🛠️ Tech Stack
 
-### 1. Create Channel Branding
-
-1. Go to **Branding** tab
-2. Click **New Branding**
-3. Upload your assets:
-   - **Intro** - Transparent video that plays at the start
-   - **Outro** - Transparent video that plays at the end
-   - **Subscribe** - Popup graphic shown periodically
-4. Configure overlap and audio settings
-5. Save your branding preset
-
-### 2. Process Videos
-
-1. Go to **Process** tab
-2. Select output mode:
-   - **Single Video** - Join all clips into one
-   - **Episodic** - Split into episodes
-3. Drag and drop your video files
-4. Reorder clips as needed
-5. Select your branding profile
-6. Configure transition and quality settings
-7. Click **Start Processing**
-
-### 3. View Outputs
-
-- Go to **Outputs** tab to see processed files
-- Click **Open Folder** to access the output directory
-
----
-
-## ⚙️ Configuration
-
-Edit `config.py` to customize:
-
-```python
-# Server settings
-HOST = "127.0.0.1"
-PORT = 5000
-
-# Output presets
-OUTPUT_PRESETS = {
-    "youtube_1080p": {
-        "resolution": "1920x1080",
-        "bitrate": "8M",
-        "preset": "slow",
-        "crf": 18
-    },
-    # Add your own presets...
-}
-```
-
----
-
-## 🛠️ API Reference
-
-### Video Processing
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/process/single` | POST | Process into single video |
-| `/api/process/episodic` | POST | Process into episodes |
-| `/api/process/<job_id>/status` | GET | Get processing status |
-| `/api/process/<job_id>/cancel` | POST | Cancel processing |
-
-### Branding Profiles
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/profiles` | GET | List all profiles |
-| `/api/profiles` | POST | Create new profile |
-| `/api/profiles/<id>` | PUT | Update profile |
-| `/api/profiles/<id>` | DELETE | Delete profile |
-| `/api/profiles/<id>/intro` | POST | Upload intro |
-| `/api/profiles/<id>/outro` | POST | Upload outro |
-| `/api/profiles/<id>/subscribe` | POST | Upload subscribe graphic |
+| Component | Technology |
+|-----------|------------|
+| **Backend** | Python 3.10+, Flask |
+| **Processing** | FFmpeg with hardware acceleration |
+| **Frontend** | Vanilla JavaScript, CSS3 (Dark theme) |
+| **File Dialog** | Tkinter native dialogs |
+| **Data Storage** | JSON files |
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Feel free to:
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
 ---
@@ -204,15 +202,25 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 👨‍💻 Author
+## 👤 Author
 
 **Ranit Bhowmick**
+- 🌐 Website: [ranitbhowmick.com](https://ranitbhowmick.com)
+- 💼 GitHub: [@ranitbhowmick](https://github.com/ranitbhowmick)
 
-- Website: [ranitbhowmick.com](https://ranitbhowmick.com)
-- GitHub: [@ranitbhowmick](https://github.com/ranitbhowmick)
+---
+
+## 🙏 Acknowledgments
+
+- [FFmpeg](https://ffmpeg.org/) - The amazing video processing library
+- [Flask](https://flask.palletsprojects.com/) - Lightweight web framework
 
 ---
 
 <p align="center">
-  Made with ❤️ for content creators
+  <strong>Made with ❤️ for content creators</strong>
+</p>
+
+<p align="center">
+  <sub>⭐ Star this repo if you find it useful!</sub>
 </p>

@@ -395,6 +395,43 @@ body {
 
 .file-summary.visible { display: block; }
 
+/* ============== Card Header with Actions ============== */
+.card-header-with-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.card-header-with-actions .card-title {
+    margin-bottom: 0;
+}
+
+.preset-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.form-select-sm {
+    padding: 4px 6px;
+    font-size: 0.6rem;
+    max-width: 120px;
+}
+
+.btn-xs {
+    padding: 4px 8px;
+    font-size: 0.55rem;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-xs svg {
+    width: 12px;
+    height: 12px;
+}
+
 /* ============== Settings Grid ============== */
 .settings-grid {
     display: grid;
@@ -972,3 +1009,85 @@ body {
     background: rgba(255,255,255,0.05);
     border-radius: 4px;
 }
+
+/* ============== Onboarding Modal ============== */
+.onboarding-modal {
+    width: 380px;
+    max-width: 90vw;
+    text-align: center;
+    padding: 30px 25px 20px;
+}
+
+.onboarding-content {
+    min-height: 160px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.onboarding-step {
+    animation: fadeInUp 0.3s ease-out;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.onboarding-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+}
+
+.onboarding-title {
+    font-size: 1.1rem;
+    font-weight: 900;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.onboarding-desc {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    max-width: 300px;
+}
+
+.onboarding-progress {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 20px 0;
+}
+
+.onboarding-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border-color);
+    transition: var(--transition);
+    cursor: pointer;
+}
+
+.onboarding-dot.active {
+    background: var(--accent);
+    transform: scale(1.2);
+}
+
+.onboarding-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.onboarding-actions .btn {
+    flex: 1;
+}
+

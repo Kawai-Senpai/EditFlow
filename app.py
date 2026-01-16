@@ -1,5 +1,5 @@
 """
-Flask API for Video Script application
+Flask API for EditFlow application
 """
 import os
 import threading
@@ -16,6 +16,7 @@ from config import (
 )
 from profile_manager import profile_manager
 from video_processor import video_processor
+from render_preset_manager import render_preset_manager
 
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -155,6 +156,73 @@ def get_available_encoders():
     """Get list of available video encoders (including hardware acceleration)"""
     encoders = video_processor.get_available_encoders()
     return jsonify(encoders)
+
+
+# ============== Render Preset Routes ==============
+
+@app.route('/api/render-presets', methods=['GET'])
+def get_render_presets():
+    """Get all render settings presets"""
+    presets = render_preset_manager.get_all_presets()
+    return jsonify(presets)
+
+
+@app.route('/api/render-presets', methods=['POST'])
+def create_render_preset():
+    """Create a new render settings preset"""
+    data = request.json
+    if not data or not data.get('name'):
+        return jsonify({"error": "Preset name is required"}), 400
+    
+    settings = data.get('settings', {})
+    preset = render_preset_manager.create_preset(data['name'], settings)
+    return jsonify(preset)
+
+
+@app.route('/api/render-presets/<preset_id>', methods=['GET'])
+def get_render_preset(preset_id):
+    """Get a specific render preset"""
+    preset = render_preset_manager.get_preset(preset_id)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/render-presets/<preset_id>', methods=['PUT'])
+def update_render_preset(preset_id):
+    """Update a render preset"""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    preset = render_preset_manager.update_preset(preset_id, data)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/render-presets/<preset_id>', methods=['DELETE'])
+def delete_render_preset(preset_id):
+    """Delete a render preset"""
+    if render_preset_manager.delete_preset(preset_id):
+        return jsonify({"success": True})
+    return jsonify({"error": "Preset not found"}), 404
+
+
+@app.route('/api/render-presets/last-used', methods=['GET'])
+def get_last_used_settings():
+    """Get the last used render settings"""
+    settings = render_preset_manager.get_last_used()
+    return jsonify(settings or {})
+
+
+@app.route('/api/render-presets/last-used', methods=['POST'])
+def save_last_used_settings():
+    """Save the last used render settings"""
+    data = request.json
+    if data:
+        render_preset_manager.save_last_used(data)
+    return jsonify({"success": True})
 
 
 # ============== Profile Routes ==============
@@ -513,10 +581,14 @@ def process_single_video():
             job.output_files = [final_path]
             job.status = "completed"
             job.progress = 100
+            print(f"[Job {job.id}] Completed successfully")
             
         except Exception as e:
+            import traceback
             job.status = "failed"
             job.error = str(e)
+            print(f"[Job {job.id}] Failed with error: {e}")
+            traceback.print_exc()
     
     thread = threading.Thread(target=process)
     thread.start()
@@ -657,10 +729,14 @@ def process_episodic():
             
             job.status = "completed"
             job.progress = 100
+            print(f"[Job {job.id}] Completed successfully - episodic")
             
         except Exception as e:
+            import traceback
             job.status = "failed"
             job.error = str(e)
+            print(f"[Job {job.id}] Failed with error: {e}")
+            traceback.print_exc()
     
     thread = threading.Thread(target=process)
     thread.start()
@@ -674,6 +750,8 @@ def get_job_status(job_id):
     """Get processing job status"""
     job = video_processor.get_job(job_id)
     if not job:
+        # Debug: print all known job IDs
+        print(f"[Job Status] Job {job_id} not found. Known jobs: {list(video_processor.jobs.keys())}")
         return jsonify({"error": "Job not found"}), 404
     
     return jsonify({
@@ -755,7 +833,7 @@ def format_size(bytes: int) -> str:
 
 
 if __name__ == '__main__':
-    print(f"\n🎬 Video Script - Starting server...")
+    print(f"\n⚡ EditFlow - Starting server...")
     print(f"📂 Output folder: {OUTPUT_DIR}")
     print(f"🌐 Open http://{HOST}:{PORT} in your browser\n")
     app.run(host=HOST, port=PORT, debug=DEBUG, threaded=True)

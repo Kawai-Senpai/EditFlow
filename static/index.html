@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Script - Gameplay Video Processor</title>
-    <meta name="description" content="Process and organize your gameplay recordings with intro/outro branding, episode splitting, and subscribe graphics.">
+    <title>EditFlow - Video Processing Workflow</title>
+    <meta name="description" content="Professional video processing tool with intro/outro branding, episode splitting, hardware acceleration, and subscribe graphics overlay.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
@@ -16,8 +16,8 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h1 class="logo">
-                    <span class="logo-icon">🎬</span>
-                    <span class="logo-text">Video Script</span>
+                    <span class="logo-icon">⚡</span>
+                    <span class="logo-text">EditFlow</span>
                 </h1>
             </div>
             
@@ -91,7 +91,7 @@
                     <div class="card">
                         <h3 class="card-title">
                             Video Files
-                            <span class="card-hint">Drag to reorder</span>
+                            <span class="card-hint">⇕ Drag items to reorder</span>
                         </h3>
                         <div class="file-drop-zone" id="file-drop-zone">
                             <div class="drop-content">
@@ -101,7 +101,7 @@
                                     <line x1="12" y1="3" x2="12" y2="15"></line>
                                 </svg>
                                 <p class="drop-text">Drop video files here or click to browse</p>
-                                <p class="drop-hint">Supports MP4, MKV, AVI, MOV, WebM • Auto-detects duration & resolution</p>
+                                <p class="drop-hint">Supports MP4, MKV, AVI, MOV, WebM • Drag to reorder after adding</p>
                             </div>
                         </div>
                         <div class="file-list" id="file-list"></div>
@@ -145,7 +145,22 @@
 
                     <!-- Settings -->
                     <div class="card">
-                        <h3 class="card-title">Settings</h3>
+                        <div class="card-header-with-actions">
+                            <h3 class="card-title">Settings</h3>
+                            <div class="preset-actions">
+                                <select id="render-preset-select" class="form-select form-select-sm">
+                                    <option value="">Load Preset...</option>
+                                </select>
+                                <button type="button" id="save-preset-btn" class="btn btn-outline btn-xs" title="Save current settings as preset">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                        <polyline points="7 3 7 8 15 8"></polyline>
+                                    </svg>
+                                    Save
+                                </button>
+                            </div>
+                        </div>
                         
                         <div class="settings-grid">
                             <!-- Branding Profile -->
@@ -472,6 +487,50 @@
                 <button type="button" class="btn btn-ghost" id="modal-cancel">Cancel</button>
                 <button type="button" class="btn btn-danger btn-sm" id="modal-delete" style="display: none;">Delete</button>
                 <button type="submit" class="btn btn-primary" id="modal-save" form="branding-form">Save Branding</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Onboarding Modal -->
+    <div class="modal-overlay" id="onboarding-modal">
+        <div class="modal onboarding-modal">
+            <div class="onboarding-content">
+                <div class="onboarding-step" data-step="1">
+                    <div class="onboarding-icon">⚡</div>
+                    <h2 class="onboarding-title">Welcome to EditFlow</h2>
+                    <p class="onboarding-desc">Your professional video processing workflow tool. Let's get you started!</p>
+                </div>
+                <div class="onboarding-step" data-step="2" style="display: none;">
+                    <div class="onboarding-icon">🎬</div>
+                    <h2 class="onboarding-title">Add Your Videos</h2>
+                    <p class="onboarding-desc">Drop video files or click the browse button to select your footage. Drag to reorder clips as needed.</p>
+                </div>
+                <div class="onboarding-step" data-step="3" style="display: none;">
+                    <div class="onboarding-icon">🎨</div>
+                    <h2 class="onboarding-title">Create Branding</h2>
+                    <p class="onboarding-desc">Go to the Branding tab to set up your intro, outro, and subscribe popup animations. Reference files directly - no copying needed!</p>
+                </div>
+                <div class="onboarding-step" data-step="4" style="display: none;">
+                    <div class="onboarding-icon">⚙️</div>
+                    <h2 class="onboarding-title">Configure Settings</h2>
+                    <p class="onboarding-desc">Choose transitions, quality presets, and encoder. NVENC gives you blazing fast GPU encoding if you have an NVIDIA card!</p>
+                </div>
+                <div class="onboarding-step" data-step="5" style="display: none;">
+                    <div class="onboarding-icon">🚀</div>
+                    <h2 class="onboarding-title">Process & Export</h2>
+                    <p class="onboarding-desc">Hit "Process Videos" and watch the magic happen. Your finished video will appear in the Outputs tab!</p>
+                </div>
+            </div>
+            <div class="onboarding-progress">
+                <span class="onboarding-dot active" data-step="1"></span>
+                <span class="onboarding-dot" data-step="2"></span>
+                <span class="onboarding-dot" data-step="3"></span>
+                <span class="onboarding-dot" data-step="4"></span>
+                <span class="onboarding-dot" data-step="5"></span>
+            </div>
+            <div class="onboarding-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="onboarding-skip">Skip Tour</button>
+                <button type="button" class="btn btn-primary btn-sm" id="onboarding-next">Next</button>
             </div>
         </div>
     </div>

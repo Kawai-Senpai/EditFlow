@@ -18,7 +18,7 @@ for dir_path in [DATA_DIR, PROFILES_DIR, TEMP_DIR, OUTPUT_DIR]:
 # Server settings
 HOST = "127.0.0.1"
 PORT = 5000
-DEBUG = True
+DEBUG = False
 
 # FFmpeg settings
 FFMPEG_PATH = "ffmpeg"  # Assumes ffmpeg is in PATH

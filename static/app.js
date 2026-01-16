@@ -1,6 +1,6 @@
 /**
- * Video Script - Frontend Application
- * A tool for processing videos with branding overlays
+ * EditFlow - Video Processing Workflow
+ * A professional tool for processing videos with branding overlays
  */
 
 // ============== State ==============
@@ -416,8 +416,14 @@ function initSettings() {
     document.getElementById('trim-global-start').addEventListener('change', applyGlobalTrim);
     document.getElementById('trim-global-end').addEventListener('change', applyGlobalTrim);
     
+    // Render preset actions
+    document.getElementById('render-preset-select').addEventListener('change', loadRenderPreset);
+    document.getElementById('save-preset-btn').addEventListener('click', saveRenderPreset);
+    
     loadProfileSelect();
     loadEncoderSelect();
+    loadRenderPresets();
+    loadLastUsedSettings();
 }
 
 async function loadProfileSelect() {
@@ -456,6 +462,93 @@ async function loadEncoderSelect() {
         }
     } catch (err) {
         console.error('Failed to load encoders:', err);
+    }
+}
+
+// ============== Render Presets ==============
+async function loadRenderPresets() {
+    try {
+        const presets = await API.get('/render-presets');
+        const select = document.getElementById('render-preset-select');
+        select.innerHTML = '<option value="">Load Preset...</option>';
+        presets.forEach(p => {
+            select.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+        });
+    } catch (err) {
+        console.error('Failed to load render presets:', err);
+    }
+}
+
+async function loadLastUsedSettings() {
+    try {
+        const settings = await API.get('/render-presets/last-used');
+        if (settings && Object.keys(settings).length > 0) {
+            applyRenderSettings(settings);
+        }
+    } catch (err) {
+        console.error('Failed to load last used settings:', err);
+    }
+}
+
+async function loadRenderPreset(e) {
+    const presetId = e.target.value;
+    if (!presetId) return;
+    
+    try {
+        const preset = await API.get(`/render-presets/${presetId}`);
+        if (preset && preset.settings) {
+            applyRenderSettings(preset.settings);
+            showToast(`Loaded preset: ${preset.name}`, 'success');
+        }
+        // Reset dropdown to placeholder
+        e.target.value = '';
+    } catch (err) {
+        showToast('Failed to load preset', 'error');
+    }
+}
+
+function applyRenderSettings(settings) {
+    if (settings.profile_id) document.getElementById('profile-select').value = settings.profile_id;
+    if (settings.transition) document.getElementById('transition-select').value = settings.transition;
+    if (settings.transition_duration) document.getElementById('transition-duration').value = settings.transition_duration;
+    if (settings.preset) document.getElementById('preset-select').value = settings.preset;
+    if (settings.encoder) document.getElementById('encoder-select').value = settings.encoder;
+    if (settings.output_name) document.getElementById('output-name').value = settings.output_name;
+    if (settings.apply_subscribe !== undefined) {
+        document.getElementById('apply-subscribe').checked = settings.apply_subscribe;
+        document.getElementById('subscribe-interval-group').style.display = settings.apply_subscribe ? 'block' : 'none';
+    }
+    if (settings.subscribe_interval) document.getElementById('subscribe-interval').value = settings.subscribe_interval;
+    
+    // Handle transition duration visibility
+    document.getElementById('transition-duration-group').style.display = 
+        settings.transition && settings.transition !== 'cut' ? 'block' : 'none';
+}
+
+function getCurrentRenderSettings() {
+    return {
+        profile_id: document.getElementById('profile-select').value,
+        transition: document.getElementById('transition-select').value,
+        transition_duration: parseFloat(document.getElementById('transition-duration').value),
+        preset: document.getElementById('preset-select').value,
+        encoder: document.getElementById('encoder-select').value,
+        output_name: document.getElementById('output-name').value,
+        apply_subscribe: document.getElementById('apply-subscribe').checked,
+        subscribe_interval: parseFloat(document.getElementById('subscribe-interval').value)
+    };
+}
+
+async function saveRenderPreset() {
+    const name = prompt('Enter preset name:');
+    if (!name || !name.trim()) return;
+    
+    try {
+        const settings = getCurrentRenderSettings();
+        const preset = await API.post('/render-presets', { name: name.trim(), settings });
+        showToast(`Preset "${preset.name}" saved!`, 'success');
+        loadRenderPresets(); // Refresh dropdown
+    } catch (err) {
+        showToast('Failed to save preset', 'error');
     }
 }
 
@@ -515,6 +608,9 @@ async function startProcessing() {
     }
     
     try {
+        // Save last used settings
+        API.post('/render-presets/last-used', getCurrentRenderSettings()).catch(() => {});
+        
         const endpoint = mode === 'single' ? '/process/single' : '/process/episodic';
         const result = await API.post(endpoint, data);
         
@@ -1036,6 +1132,66 @@ function formatDuration(seconds) {
         : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
+// ============== Onboarding ==============
+function initOnboarding() {
+    // Check if user has completed onboarding
+    if (localStorage.getItem('editflow_onboarding_complete')) {
+        return; // Skip onboarding
+    }
+    
+    const modal = document.getElementById('onboarding-modal');
+    const nextBtn = document.getElementById('onboarding-next');
+    const skipBtn = document.getElementById('onboarding-skip');
+    let currentStep = 1;
+    const totalSteps = 5;
+    
+    // Show onboarding
+    modal.classList.add('active');
+    
+    function showStep(step) {
+        document.querySelectorAll('.onboarding-step').forEach(el => {
+            el.style.display = 'none';
+        });
+        document.querySelectorAll('.onboarding-dot').forEach(el => {
+            el.classList.remove('active');
+        });
+        
+        const stepEl = document.querySelector(`.onboarding-step[data-step="${step}"]`);
+        const dotEl = document.querySelector(`.onboarding-dot[data-step="${step}"]`);
+        
+        if (stepEl) stepEl.style.display = 'flex';
+        if (dotEl) dotEl.classList.add('active');
+        
+        // Update button text
+        nextBtn.textContent = step === totalSteps ? 'Get Started' : 'Next';
+    }
+    
+    nextBtn.addEventListener('click', () => {
+        if (currentStep < totalSteps) {
+            currentStep++;
+            showStep(currentStep);
+        } else {
+            completeOnboarding();
+        }
+    });
+    
+    skipBtn.addEventListener('click', completeOnboarding);
+    
+    // Allow clicking dots to navigate
+    document.querySelectorAll('.onboarding-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+            currentStep = parseInt(dot.dataset.step);
+            showStep(currentStep);
+        });
+    });
+    
+    function completeOnboarding() {
+        localStorage.setItem('editflow_onboarding_complete', 'true');
+        modal.classList.remove('active');
+        showToast('Welcome to EditFlow! Let\'s create something awesome.', 'success');
+    }
+}
+
 // ============== Init ==============
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
@@ -1045,6 +1201,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initBrandingModal();
     initOutputs();
     loadProfileSelect();
+    
+    // Show onboarding for first-time users
+    setTimeout(initOnboarding, 500);
 });
 
 // Global functions for onclick handlers
