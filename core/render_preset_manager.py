@@ -9,8 +9,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+from .config import PROFILES_DIR
+
 # Default presets directory
-PRESETS_FILE = Path(__file__).parent / "data" / "profiles" / "render_presets.json"
+PRESETS_FILE = PROFILES_DIR / "render_presets.json"
 
 
 class RenderPresetManager:

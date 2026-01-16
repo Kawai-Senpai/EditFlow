@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 # Base paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 PROFILES_DIR = DATA_DIR / "profiles"
 TEMP_DIR = DATA_DIR / "temp"

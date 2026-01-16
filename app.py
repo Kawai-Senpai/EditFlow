@@ -3,6 +3,7 @@ Flask API for EditFlow application
 """
 import os
 import threading
+import uuid
 import tkinter as tk
 from tkinter import filedialog
 from pathlib import Path
@@ -10,13 +11,13 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
-from config import (
+from core.config import (
     HOST, PORT, DEBUG, OUTPUT_PRESETS, TRANSITIONS,
     PROFILES_DIR, TEMP_DIR, OUTPUT_DIR
 )
-from profile_manager import profile_manager
-from video_processor import video_processor
-from render_preset_manager import render_preset_manager
+from core.profile_manager import profile_manager
+from core.video_processor import video_processor
+from core.render_preset_manager import render_preset_manager
 
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -30,6 +31,57 @@ VIDEO_EXTENSIONS = [
     ('Video Files', '*.mp4 *.mkv *.avi *.mov *.webm *.wmv *.flv *.m4v *.ts *.mts'),
     ('All Files', '*.*')
 ]
+
+
+def _normalize_output_name(name: str, default_ext: str = ".mp4") -> tuple[str, str]:
+    safe_name = secure_filename(name or "output")
+    base = Path(safe_name)
+    if base.suffix:
+        stem = base.stem
+        suffix = base.suffix
+    else:
+        stem = base.name
+        suffix = default_ext
+    if not stem:
+        stem = "output"
+    return stem, suffix
+
+
+def _unique_output_path(base_dir: Path, name: str, token: str | None = None) -> str:
+    stem, suffix = _normalize_output_name(name)
+    candidate = base_dir / f"{stem}{suffix}"
+    if not candidate.exists():
+        return str(candidate)
+    if token:
+        candidate = base_dir / f"{stem}_{token}{suffix}"
+        if not candidate.exists():
+            return str(candidate)
+    for i in range(1, 1000):
+        candidate = base_dir / f"{stem}_{i}{suffix}"
+        if not candidate.exists():
+            return str(candidate)
+    unique = base_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
+    return str(unique)
+
+
+def _unique_output_prefix(base_dir: Path, prefix: str, token: str | None = None) -> str:
+    safe_prefix = secure_filename(prefix or "Episode")
+    if not safe_prefix:
+        safe_prefix = "Episode"
+    def _has_conflict(value: str) -> bool:
+        return any(base_dir.glob(f"{value}_*.mp4"))
+
+    if not _has_conflict(safe_prefix):
+        return safe_prefix
+    if token:
+        candidate_prefix = f"{safe_prefix}_{token}"
+        if not _has_conflict(candidate_prefix):
+            return candidate_prefix
+    for i in range(1, 1000):
+        candidate_prefix = f"{safe_prefix}_{i}"
+        if not _has_conflict(candidate_prefix):
+            return candidate_prefix
+    return f"{safe_prefix}_{uuid.uuid4().hex[:8]}"
 
 
 # ============== Static Routes ==============
@@ -498,86 +550,49 @@ def process_single_video():
     def process():
         try:
             job.status = "processing"
-            job.total_steps = 3 if profile_id else 1
-            
-            # Step 1: Concatenate videos
-            job.current_step = "Joining videos..."
+            job.total_steps = 1
+            job.current_step = "Processing video..."
             job.current_step_num = 1
-            
-            concat_output = str(OUTPUT_DIR / f"{output_name}_concat.mp4")
-            video_processor.concatenate_videos(
-                video_paths, concat_output, job,
+            job.progress = 0
+
+            profile = profile_manager.get_profile(profile_id) if profile_id else None
+
+            intro_path = profile.get('intro', {}).get('file_path') if profile and profile.get('intro') else None
+            intro_overlap = profile.get('intro', {}).get('overlap_seconds', 0) if profile and profile.get('intro') else 0
+            intro_full_overlap = profile.get('intro', {}).get('full_overlap', False) if profile and profile.get('intro') else False
+
+            outro_path = profile.get('outro', {}).get('file_path') if profile and profile.get('outro') else None
+            outro_overlap = profile.get('outro', {}).get('overlap_seconds', 0) if profile and profile.get('outro') else 0
+            outro_full_overlap = profile.get('outro', {}).get('full_overlap', False) if profile and profile.get('outro') else False
+
+            subscribe_path = None
+            subscribe_duration = 8
+            if apply_subscribe and profile and profile.get('subscribe_graphics'):
+                sub = profile['subscribe_graphics']
+                subscribe_path = sub.get('file_path')
+                subscribe_duration = sub.get('duration_seconds', 8)
+
+            final_path = _unique_output_path(OUTPUT_DIR, output_name, job.id)
+            video_processor.process_single_pass(
+                video_paths,
+                final_path,
+                job,
                 transition=transition,
                 transition_duration=transition_duration,
                 preset=preset,
                 trim_map=trim_map,
-                encoder=encoder
+                encoder=encoder,
+                intro_path=intro_path,
+                intro_overlap=intro_overlap,
+                intro_full_overlap=intro_full_overlap,
+                outro_path=outro_path,
+                outro_overlap=outro_overlap,
+                outro_full_overlap=outro_full_overlap,
+                subscribe_path=subscribe_path,
+                subscribe_interval=subscribe_interval,
+                subscribe_duration=subscribe_duration
             )
-            
-            current_video = concat_output
-            
-            # Step 2: Apply intro/outro if profile selected
-            if profile_id:
-                profile = profile_manager.get_profile(profile_id)
-                if profile:
-                    job.current_step = "Applying intro/outro..."
-                    job.current_step_num = 2
-                    job.progress = 0
-                    
-                    intro_path = profile.get('intro', {}).get('file_path') if profile.get('intro') else None
-                    intro_overlap = profile.get('intro', {}).get('overlap_seconds', 0) if profile.get('intro') else 0
-                    intro_full_overlap = profile.get('intro', {}).get('full_overlap', False) if profile.get('intro') else False
-                    
-                    outro_path = profile.get('outro', {}).get('file_path') if profile.get('outro') else None
-                    outro_overlap = profile.get('outro', {}).get('overlap_seconds', 0) if profile.get('outro') else 0
-                    outro_full_overlap = profile.get('outro', {}).get('full_overlap', False) if profile.get('outro') else False
-                    
-                    if intro_path or outro_path:
-                        overlay_output = str(OUTPUT_DIR / f"{output_name}_overlay.mp4")
-                        video_processor.apply_intro_outro_overlays(
-                            current_video, overlay_output, job,
-                            intro_path=intro_path, 
-                            intro_overlap=intro_overlap,
-                            intro_full_overlap=intro_full_overlap,
-                            outro_path=outro_path, 
-                            outro_overlap=outro_overlap,
-                            outro_full_overlap=outro_full_overlap,
-                            preset=preset,
-                            encoder=encoder
-                        )
-                        
-                        # Clean up intermediate
-                        if Path(current_video).exists() and current_video != concat_output:
-                            Path(current_video).unlink()
-                        current_video = overlay_output
-                    
-                    # Step 3: Apply subscribe graphics
-                    if apply_subscribe and profile.get('subscribe_graphics'):
-                        job.current_step = "Adding subscribe graphics..."
-                        job.current_step_num = 3
-                        job.progress = 0
-                        
-                        sub = profile['subscribe_graphics']
-                        final_output = str(OUTPUT_DIR / f"{output_name}.mp4")
-                        video_processor.apply_subscribe_graphics(
-                            current_video, sub['file_path'], final_output, job,
-                            interval_seconds=subscribe_interval,  # Use interval from render settings, not branding
-                            duration_seconds=sub.get('duration_seconds', 8),
-                            preset=preset
-                        )
-                        
-                        # Clean up intermediate
-                        if Path(current_video).exists():
-                            Path(current_video).unlink()
-                        current_video = final_output
-            
-            # Rename final output
-            final_path = str(OUTPUT_DIR / f"{output_name}.mp4")
-            if current_video != final_path:
-                if Path(final_path).exists():
-                    Path(final_path).unlink()
-                Path(current_video).rename(final_path)
-            
+
             job.output_files = [final_path]
             job.status = "completed"
             job.progress = 100
@@ -624,6 +639,7 @@ def process_episodic():
     
     # Create job
     job = video_processor.create_job()
+    output_prefix = _unique_output_prefix(OUTPUT_DIR, output_prefix, job.id)
     
     def process():
         try:
@@ -833,7 +849,7 @@ def format_size(bytes: int) -> str:
 
 
 if __name__ == '__main__':
-    print(f"\n⚡ EditFlow - Starting server...")
-    print(f"📂 Output folder: {OUTPUT_DIR}")
-    print(f"🌐 Open http://{HOST}:{PORT} in your browser\n")
+    print("\nEditFlow - Starting server...")
+    print(f"Output folder: {OUTPUT_DIR}")
+    print(f"Open http://{HOST}:{PORT} in your browser\n")
     app.run(host=HOST, port=PORT, debug=DEBUG, threaded=True)

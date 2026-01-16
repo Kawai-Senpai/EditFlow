@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from config import PROFILES_DIR
+from .config import PROFILES_DIR
 
 
 class ProfileManager:
