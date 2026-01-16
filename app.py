@@ -5,6 +5,7 @@ import os
 import threading
 import uuid
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
@@ -852,4 +853,13 @@ if __name__ == '__main__':
     print("\nEditFlow - Starting server...")
     print(f"Output folder: {OUTPUT_DIR}")
     print(f"Open http://{HOST}:{PORT} in your browser\n")
+    # Auto-open browser once when server starts (avoid double-open with reloader)
+    if not DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        def _open_browser():
+            try:
+                webbrowser.open(f"http://{HOST}:{PORT}")
+            except Exception as e:
+                print(f"[EditFlow] Failed to open browser: {e}")
+
+        threading.Timer(1.0, _open_browser).start()
     app.run(host=HOST, port=PORT, debug=DEBUG, threaded=True)
