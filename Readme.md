@@ -61,8 +61,8 @@
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/editflow.git
-   cd editflow
+   git clone https://github.com/KawaiSenpai/EditFlow.git
+   cd EditFlow
    ```
 
 2. **Create virtual environment**
@@ -146,7 +146,10 @@ EditFlow automatically detects and uses available hardware encoders for faster p
 | YouTube 1440p | 2560×1440 | 24 Mbps | High quality gaming content |
 | YouTube 1080p | 1920×1080 | 12 Mbps | Standard content (recommended) |
 | YouTube 1080p Fast | 1920×1080 | 12 Mbps | Quick previews |
+| YouTube 1080p Balanced | 1920×1080 | 8 Mbps | Faster renders, smaller files |
+| YouTube 1080p Small | 1920×1080 | 6 Mbps | Compact exports |
 | YouTube 720p | 1280×720 | 7.5 Mbps | Faster uploads, limited bandwidth |
+| YouTube 720p Small | 1280×720 | 4 Mbps | Compact exports |
 | Original | Source | Source | Stream copy (fastest, no re-encoding) |
 
 ---
@@ -154,11 +157,13 @@ EditFlow automatically detects and uses available hardware encoders for faster p
 ## 📁 Project Structure
 
 ```
-editflow/
+EditFlow/
 ├── app.py              # Flask API server
-├── video_processor.py  # FFmpeg processing engine
-├── profile_manager.py  # Branding profiles handler
-├── config.py           # Configuration and presets
+├── core/
+│   ├── video_processor.py   # FFmpeg processing engine
+│   ├── profile_manager.py   # Branding profiles handler
+│   ├── render_preset_manager.py # Render presets manager
+│   └── config.py            # Configuration and presets
 ├── static/
 │   ├── index.html      # Main UI
 │   ├── app.js          # Frontend logic
@@ -204,9 +209,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 👤 Author
 
-**Ranit Bhowmick**
-- 🌐 Website: [ranitbhowmick.com](https://ranitbhowmick.com)
-- 💼 GitHub: [@ranitbhowmick](https://github.com/ranitbhowmick)
+**KawaiSenpai**
+- 💼 GitHub: [@KawaiSenpai](https://github.com/KawaiSenpai)
 
 ---
 
