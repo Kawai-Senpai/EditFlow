@@ -592,7 +592,8 @@ class VideoProcessor:
                            episode_duration: float = 3600,
                            overlap_seconds: float = 30,
                            preset: str = "youtube_1080p",
-                           output_prefix: str = "Episode") -> list[str]:
+                           output_prefix: str = "Episode",
+                           output_dir: Optional[str] = None) -> list[str]:
         """Split a video into episodes with overlap"""
         video_info = self.get_video_info(video_path)
         if not video_info:
@@ -640,6 +641,9 @@ class VideoProcessor:
         output_files = []
         job.total_steps = len(episodes)
         
+        output_base = Path(output_dir) if output_dir else OUTPUT_DIR
+        output_base.mkdir(parents=True, exist_ok=True)
+
         for i, ep in enumerate(episodes):
             if job.cancelled:
                 break
@@ -647,7 +651,7 @@ class VideoProcessor:
             job.current_step = f"Processing {output_prefix} {ep['num']}"
             job.current_step_num = i + 1
             
-            output_path = str(OUTPUT_DIR / f"{output_prefix}_{ep['num']:02d}.mp4")
+            output_path = str(output_base / f"{output_prefix}_{ep['num']:02d}.mp4")
             
             target_w = preset_config.get("width", 1920)
             target_h = preset_config.get("height", 1080)

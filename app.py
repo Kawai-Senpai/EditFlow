@@ -85,6 +85,29 @@ def _unique_output_prefix(base_dir: Path, prefix: str, token: str | None = None)
     return f"{safe_prefix}_{uuid.uuid4().hex[:8]}"
 
 
+def _resolve_output_dir(output_dir: str | None, create: bool = True) -> Path:
+    """Resolve output directory from user input or fall back to default."""
+    if not output_dir:
+        return OUTPUT_DIR
+
+    candidate = Path(output_dir).expanduser()
+    try:
+        candidate = candidate.resolve()
+    except Exception:
+        candidate = Path(output_dir).expanduser()
+
+    if candidate.exists():
+        if not candidate.is_dir():
+            raise ValueError("Output path is not a directory")
+    else:
+        if create:
+            candidate.mkdir(parents=True, exist_ok=True)
+        else:
+            raise FileNotFoundError("Output folder not found")
+
+    return candidate
+
+
 # ============== Static Routes ==============
 
 @app.route('/')
@@ -541,9 +564,15 @@ def process_single_video():
     transition_duration = float(data.get('transition_duration', 1.0))
     preset = data.get('preset', 'youtube_1080p_balanced')
     output_name = data.get('output_name', 'output')
+    output_dir_input = data.get('output_dir')
     apply_subscribe = data.get('apply_subscribe', False)
     subscribe_interval = float(data.get('subscribe_interval', 300))  # In seconds
     encoder = data.get('encoder', 'software')  # Hardware acceleration selection
+
+    try:
+        output_dir = _resolve_output_dir(output_dir_input)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
     
     # Create job
     job = video_processor.create_job()
@@ -573,7 +602,7 @@ def process_single_video():
                 subscribe_path = sub.get('file_path')
                 subscribe_duration = sub.get('duration_seconds', 8)
 
-            final_path = _unique_output_path(OUTPUT_DIR, output_name, job.id)
+            final_path = _unique_output_path(output_dir, output_name, job.id)
             video_processor.process_single_pass(
                 video_paths,
                 final_path,
@@ -636,11 +665,17 @@ def process_episodic():
     episode_overlap = float(data.get('episode_overlap', 30))  # Default 30 seconds
     preset = data.get('preset', 'youtube_1080p_balanced')
     output_prefix = data.get('output_prefix', 'Episode')
+    output_dir_input = data.get('output_dir')
     apply_subscribe = data.get('apply_subscribe', False)
+
+    try:
+        output_dir = _resolve_output_dir(output_dir_input)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
     
     # Create job
     job = video_processor.create_job()
-    output_prefix = _unique_output_prefix(OUTPUT_DIR, output_prefix, job.id)
+    output_prefix = _unique_output_prefix(output_dir, output_prefix, job.id)
     
     def process():
         try:
@@ -671,7 +706,8 @@ def process_episodic():
                 episode_duration=episode_duration,
                 overlap_seconds=episode_overlap,
                 preset=preset,
-                output_prefix=output_prefix
+                output_prefix=output_prefix,
+                output_dir=str(output_dir)
             )
             
             # Clean up concat if we made one
@@ -702,7 +738,7 @@ def process_episodic():
                         outro_overlap = profile.get('outro', {}).get('overlap_seconds', 0) if profile.get('outro') else 0
                         
                         if intro_path or outro_path:
-                            overlay_output = str(OUTPUT_DIR / f"{output_prefix}_{i+1:02d}_overlay.mp4")
+                            overlay_output = str(output_dir / f"{output_prefix}_{i+1:02d}_overlay.mp4")
                             video_processor.apply_intro_outro_overlays(
                                 current_video, overlay_output, job,
                                 intro_path=intro_path, intro_overlap=intro_overlap,
@@ -717,7 +753,7 @@ def process_episodic():
                         # Apply subscribe graphics
                         if apply_subscribe and profile.get('subscribe_graphics'):
                             sub = profile['subscribe_graphics']
-                            sub_output = str(OUTPUT_DIR / f"{output_prefix}_{i+1:02d}_final.mp4")
+                            sub_output = str(output_dir / f"{output_prefix}_{i+1:02d}_final.mp4")
                             video_processor.apply_subscribe_graphics(
                                 current_video, sub['file_path'], sub_output, job,
                                 interval_seconds=sub.get('interval_seconds', 300),
@@ -730,7 +766,7 @@ def process_episodic():
                             current_video = sub_output
                         
                         # Rename to final name
-                        final_path = str(OUTPUT_DIR / f"{output_prefix}_{i+1:02d}.mp4")
+                        final_path = str(output_dir / f"{output_prefix}_{i+1:02d}.mp4")
                         if current_video != final_path:
                             if Path(final_path).exists():
                                 Path(final_path).unlink()
@@ -796,8 +832,14 @@ def cancel_job(job_id):
 @app.route('/api/output', methods=['GET'])
 def list_outputs():
     """List all output files"""
+    output_dir_input = request.args.get("dir")
+    try:
+        output_dir = _resolve_output_dir(output_dir_input)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
     files = []
-    for f in OUTPUT_DIR.glob("*.mp4"):
+    for f in output_dir.glob("*.mp4"):
         stat = f.stat()
         files.append({
             "name": f.name,
@@ -814,7 +856,13 @@ def list_outputs():
 @app.route('/api/output/<filename>', methods=['DELETE'])
 def delete_output(filename):
     """Delete an output file"""
-    file_path = OUTPUT_DIR / secure_filename(filename)
+    output_dir_input = request.args.get("dir")
+    try:
+        output_dir = _resolve_output_dir(output_dir_input, create=False)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    file_path = output_dir / secure_filename(filename)
     if file_path.exists():
         file_path.unlink()
         return jsonify({"message": "File deleted"})
@@ -824,7 +872,13 @@ def delete_output(filename):
 @app.route('/api/output/folder', methods=['GET'])
 def get_output_folder():
     """Get output folder path"""
-    return jsonify({"path": str(OUTPUT_DIR)})
+    output_dir_input = request.args.get("dir")
+    try:
+        output_dir = _resolve_output_dir(output_dir_input)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    return jsonify({"path": str(output_dir)})
 
 
 # ============== Utility Functions ==============

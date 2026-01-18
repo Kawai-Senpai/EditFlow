@@ -159,6 +159,12 @@
                                     </svg>
                                     Save
                                 </button>
+                                <button type="button" id="update-preset-btn" class="btn btn-outline btn-xs" title="Update selected preset" disabled>
+                                    Update
+                                </button>
+                                <button type="button" id="delete-preset-btn" class="btn btn-danger btn-xs" title="Delete selected preset" disabled>
+                                    Delete
+                                </button>
                             </div>
                         </div>
                         
@@ -242,6 +248,16 @@
                             <div class="form-group">
                                 <label class="form-label">Output Name</label>
                                 <input type="text" id="output-name" class="form-input" placeholder="output" value="gameplay">
+                            </div>
+
+                            <!-- Output Folder -->
+                            <div class="form-group">
+                                <label class="form-label">Output Folder</label>
+                                <div class="input-with-button">
+                                    <input type="text" id="output-dir" class="form-input" placeholder="Default output folder">
+                                    <button type="button" class="btn btn-ghost btn-xs" id="output-dir-browse">Browse</button>
+                                </div>
+                                <p class="form-hint">Choose where processed videos are saved</p>
                             </div>
                         </div>
 

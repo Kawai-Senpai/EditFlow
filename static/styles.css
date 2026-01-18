@@ -491,6 +491,14 @@ body {
 .input-with-unit { display: flex; align-items: center; }
 .input-with-unit .form-input { flex: 1; }
 
+.input-with-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.input-with-button .form-input { flex: 1; }
+
 .input-unit {
     padding: 6px 0 6px 6px;
     font-size: 0.6rem;

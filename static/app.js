@@ -9,7 +9,9 @@ const state = {
     profiles: [],
     outputs: [],
     currentJob: null,
-    editingProfile: null
+    editingProfile: null,
+    renderPresets: [],
+    selectedPresetId: null
 };
 
 // ============== API ==============
@@ -419,6 +421,26 @@ function initSettings() {
     // Render preset actions
     document.getElementById('render-preset-select').addEventListener('change', loadRenderPreset);
     document.getElementById('save-preset-btn').addEventListener('click', saveRenderPreset);
+    document.getElementById('update-preset-btn').addEventListener('click', updateRenderPreset);
+    document.getElementById('delete-preset-btn').addEventListener('click', deleteRenderPreset);
+
+    const outputDirBrowse = document.getElementById('output-dir-browse');
+    const outputDirInput = document.getElementById('output-dir');
+    if (outputDirBrowse && outputDirInput) {
+        outputDirBrowse.addEventListener('click', async () => {
+            const initialDir = outputDirInput.value || undefined;
+            try {
+                const result = await API.post('/browse/folder', { initial_dir: initialDir });
+                if (result.cancelled) return;
+                if (result.path) {
+                    outputDirInput.value = result.path;
+                    showToast('Output folder selected', 'success');
+                }
+            } catch (err) {
+                showToast(`Failed to select folder: ${err.message}`, 'error');
+            }
+        });
+    }
     
     loadProfileSelect();
     loadEncoderSelect();
@@ -470,10 +492,19 @@ async function loadRenderPresets() {
     try {
         const presets = await API.get('/render-presets');
         const select = document.getElementById('render-preset-select');
+        state.renderPresets = presets || [];
+        const currentSelection = state.selectedPresetId;
         select.innerHTML = '<option value="">Load Preset...</option>';
         presets.forEach(p => {
             select.innerHTML += `<option value="${p.id}">${p.name}</option>`;
         });
+        if (currentSelection && presets.some(p => p.id === currentSelection)) {
+            select.value = currentSelection;
+        } else {
+            state.selectedPresetId = null;
+            select.value = '';
+        }
+        updatePresetActionState();
     } catch (err) {
         console.error('Failed to load render presets:', err);
     }
@@ -492,7 +523,11 @@ async function loadLastUsedSettings() {
 
 async function loadRenderPreset(e) {
     const presetId = e.target.value;
-    if (!presetId) return;
+    if (!presetId) {
+        state.selectedPresetId = null;
+        updatePresetActionState();
+        return;
+    }
     
     try {
         const preset = await API.get(`/render-presets/${presetId}`);
@@ -500,8 +535,8 @@ async function loadRenderPreset(e) {
             applyRenderSettings(preset.settings);
             showToast(`Loaded preset: ${preset.name}`, 'success');
         }
-        // Reset dropdown to placeholder
-        e.target.value = '';
+        state.selectedPresetId = presetId;
+        updatePresetActionState();
     } catch (err) {
         showToast('Failed to load preset', 'error');
     }
@@ -514,6 +549,9 @@ function applyRenderSettings(settings) {
     if (settings.preset) document.getElementById('preset-select').value = settings.preset;
     if (settings.encoder) document.getElementById('encoder-select').value = settings.encoder;
     if (settings.output_name) document.getElementById('output-name').value = settings.output_name;
+    if (Object.prototype.hasOwnProperty.call(settings, 'output_dir')) {
+        document.getElementById('output-dir').value = settings.output_dir || '';
+    }
     if (settings.apply_subscribe !== undefined) {
         document.getElementById('apply-subscribe').checked = settings.apply_subscribe;
         document.getElementById('subscribe-interval-group').style.display = settings.apply_subscribe ? 'block' : 'none';
@@ -533,6 +571,7 @@ function getCurrentRenderSettings() {
         preset: document.getElementById('preset-select').value,
         encoder: document.getElementById('encoder-select').value,
         output_name: document.getElementById('output-name').value,
+        output_dir: document.getElementById('output-dir').value.trim(),
         apply_subscribe: document.getElementById('apply-subscribe').checked,
         subscribe_interval: parseFloat(document.getElementById('subscribe-interval').value)
     };
@@ -546,9 +585,67 @@ async function saveRenderPreset() {
         const settings = getCurrentRenderSettings();
         const preset = await API.post('/render-presets', { name: name.trim(), settings });
         showToast(`Preset "${preset.name}" saved!`, 'success');
-        loadRenderPresets(); // Refresh dropdown
+        state.selectedPresetId = preset.id;
+        await loadRenderPresets();
     } catch (err) {
         showToast('Failed to save preset', 'error');
+    }
+}
+
+function getSelectedPreset() {
+    if (!state.selectedPresetId) return null;
+    return state.renderPresets.find(p => p.id === state.selectedPresetId) || null;
+}
+
+function updatePresetActionState() {
+    const hasSelection = !!getSelectedPreset();
+    const updateBtn = document.getElementById('update-preset-btn');
+    const deleteBtn = document.getElementById('delete-preset-btn');
+    if (updateBtn) updateBtn.disabled = !hasSelection;
+    if (deleteBtn) deleteBtn.disabled = !hasSelection;
+}
+
+async function updateRenderPreset() {
+    const preset = getSelectedPreset();
+    if (!preset) {
+        showToast('Select a preset to update', 'warning');
+        return;
+    }
+
+    const name = prompt('Update preset name:', preset.name);
+    if (name === null) return;
+
+    const payload = { settings: getCurrentRenderSettings() };
+    if (name.trim()) {
+        payload.name = name.trim();
+    }
+
+    try {
+        const updated = await API.put(`/render-presets/${preset.id}`, payload);
+        showToast(`Preset "${updated.name}" updated`, 'success');
+        state.selectedPresetId = updated.id;
+        await loadRenderPresets();
+    } catch (err) {
+        showToast(`Failed to update preset: ${err.message}`, 'error');
+    }
+}
+
+async function deleteRenderPreset() {
+    const preset = getSelectedPreset();
+    if (!preset) {
+        showToast('Select a preset to delete', 'warning');
+        return;
+    }
+
+    if (!confirm(`Delete preset "${preset.name}"?`)) return;
+
+    try {
+        await API.delete(`/render-presets/${preset.id}`);
+        showToast('Preset deleted', 'success');
+        state.selectedPresetId = null;
+        await loadRenderPresets();
+    } catch (err) {
+        showToast(`Failed to delete preset: ${err.message}`, 'error');
     }
 }
 
@@ -570,6 +667,7 @@ async function startProcessing() {
     const preset = document.getElementById('preset-select').value;
     const encoder = document.getElementById('encoder-select').value;
     const outputName = document.getElementById('output-name').value || 'output';
+    const outputDir = document.getElementById('output-dir').value.trim();
     const applySubscribe = document.getElementById('apply-subscribe').checked;
     const subscribeInterval = parseFloat(document.getElementById('subscribe-interval').value) * 60; // Convert to seconds
     
@@ -597,6 +695,7 @@ async function startProcessing() {
         preset,
         encoder,
         output_name: outputName,
+        output_dir: outputDir || null,
         apply_subscribe: applySubscribe,
         subscribe_interval: subscribeInterval
     };
@@ -1048,7 +1147,9 @@ async function loadOutputs() {
     list.innerHTML = Array(3).fill('<div class="output-item skeleton skeleton-item"></div>').join('');
     
     try {
-        state.outputs = await API.get('/output');
+        const outputDir = document.getElementById('output-dir')?.value.trim();
+        const endpoint = outputDir ? `/output?dir=${encodeURIComponent(outputDir)}` : '/output';
+        state.outputs = await API.get(endpoint);
         renderOutputs();
     } catch (err) {
         showToast('Failed to load outputs', 'error');
@@ -1100,7 +1201,11 @@ async function deleteOutput(filename) {
     if (!confirm(`Delete ${filename}?`)) return;
     
     try {
-        await API.delete(`/output/${filename}`);
+        const outputDir = document.getElementById('output-dir')?.value.trim();
+        const endpoint = outputDir
+            ? `/output/${filename}?dir=${encodeURIComponent(outputDir)}`
+            : `/output/${filename}`;
+        await API.delete(endpoint);
         loadOutputs();
         showToast('File deleted', 'success');
     } catch (err) {
@@ -1111,7 +1216,9 @@ async function deleteOutput(filename) {
 function initOutputs() {
     document.getElementById('open-folder-btn').addEventListener('click', async () => {
         try {
-            const data = await API.get('/output/folder');
+            const outputDir = document.getElementById('output-dir')?.value.trim();
+            const endpoint = outputDir ? `/output/folder?dir=${encodeURIComponent(outputDir)}` : '/output/folder';
+            const data = await API.get(endpoint);
             showToast(`Output folder: ${data.path}`, 'info');
         } catch (err) {
             showToast('Failed to get folder path', 'error');
