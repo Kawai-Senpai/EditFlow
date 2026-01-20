@@ -950,39 +950,64 @@ class VideoProcessor:
         
         filter_parts = []
         filter_parts.append(f"[0:v]{scale_filter},setsar=1[base]")
-        filter_parts.append(f"[1:v]format=rgba,{overlay_scale}[sub]")
-        filter_parts.append(f"[base][sub]overlay=0:0:enable='{enable_expr}'[vout]")
+        filter_parts.append(
+            f"[1:v]format=rgba,{overlay_scale},trim=duration={duration_seconds},setpts=PTS-STARTPTS[subbase]"
+        )
+
+        sub_inputs = []
+        if len(appearances) > 1:
+            sub_labels = "".join([f"[sub{i}]" for i in range(len(appearances))])
+            filter_parts.append(f"[subbase]split={len(appearances)}{sub_labels}")
+            sub_inputs = [f"sub{i}" for i in range(len(appearances))]
+        else:
+            sub_inputs = ["subbase"]
+
+        current_label = "base"
+        for i, t in enumerate(appearances):
+            sub_label = sub_inputs[i] if len(sub_inputs) > 1 else sub_inputs[0]
+            filter_parts.append(f"[{sub_label}]setpts=PTS+{t}/TB[subt{i}]")
+            filter_parts.append(
+                f"[{current_label}][subt{i}]overlay=0:0:enable='between(t,{t},{t + duration_seconds})':eof_action=pass[v{i}]"
+            )
+            current_label = f"v{i}"
         
         filter_complex = ";".join(filter_parts)
         
         # Audio mixing for subscribe sound at each appearance
         audio_filters = []
         if subscribe_info.has_audio:
-            delays = []
-            for t in appearances:
-                delay_ms = int(t * 1000)
-                delays.append(f"adelay={delay_ms}|{delay_ms}")
-            
-            # Create delayed copies of subscribe audio
+            audio_filters.append(
+                f"[1:a]atrim=duration={duration_seconds},asetpts=PTS-STARTPTS[suba]"
+            )
+
+            suba_inputs = []
+            if len(appearances) > 1:
+                suba_labels = "".join([f"[suba{i}]" for i in range(len(appearances))])
+                audio_filters.append(f"[suba]asplit={len(appearances)}{suba_labels}")
+                suba_inputs = [f"suba{i}" for i in range(len(appearances))]
+            else:
+                suba_inputs = ["suba"]
+
             audio_inputs = []
             for i, t in enumerate(appearances):
                 delay_ms = int(t * 1000)
-                audio_filters.append(f"[1:a]adelay={delay_ms}|{delay_ms}[suba{i}]")
-                audio_inputs.append(f"[suba{i}]")
-            
-            # Mix all audio
+                src = suba_inputs[i] if len(suba_inputs) > 1 else suba_inputs[0]
+                audio_filters.append(f"[{src}]adelay={delay_ms}|{delay_ms}[subad{i}]")
+                audio_inputs.append(f"[subad{i}]")
+
             if audio_inputs:
                 mix_inputs = "[0:a]" + "".join(audio_inputs)
-                audio_filters.append(f"{mix_inputs}amix=inputs={len(appearances) + 1}:duration=first[aout]")
+                audio_filters.append(
+                    f"{mix_inputs}amix=inputs={len(audio_inputs) + 1}:duration=first:dropout_transition=2[aout]"
+                )
                 filter_complex += ";" + ";".join(audio_filters)
         
         cmd = [
             FFMPEG_PATH, "-y",
             "-i", video_path,
-            "-stream_loop", "-1",
             "-i", subscribe_path,
             "-filter_complex", filter_complex,
-            "-map", "[vout]"
+            "-map", f"[{current_label}]"
         ]
         
         if subscribe_info.has_audio and audio_filters:
@@ -997,8 +1022,6 @@ class VideoProcessor:
         cmd.extend(["-c:a", audio_codec])
         if audio_codec != "copy" and preset_config.get("audio_bitrate"):
             cmd.extend(["-b:a", preset_config["audio_bitrate"]])
-        cmd.extend(["-shortest"])
-        
         cmd.append(output_path)
         
         self._run_ffmpeg(cmd, job, video_info.duration)
@@ -1266,34 +1289,57 @@ class VideoProcessor:
         # Apply subscribe overlay on the full timeline.
         if subscribe_path and appearances:
             subscribe_idx = next_input_index
-            loop_args = ["-stream_loop", "-1"]
-            if total_duration > 0:
-                loop_args.extend(["-t", str(total_duration)])
-            loop_args.extend(["-i", subscribe_path])
-            inputs.extend(loop_args)
+            inputs.extend(["-i", subscribe_path])
             next_input_index += 1
 
-            enable_expr = " + ".join(
-                [f"between(t,{t},{t + subscribe_duration})" for t in appearances]
-            )
-            filter_parts.append(f"[{subscribe_idx}:v]format=rgba,{overlay_scale}[sub]")
             filter_parts.append(
-                f"[{timeline_video_label}][sub]overlay=0:0:enable='{enable_expr}':shortest=1[vsub]"
+                f"[{subscribe_idx}:v]format=rgba,{overlay_scale},trim=duration={subscribe_duration},setpts=PTS-STARTPTS[subbase]"
             )
-            final_video_label = "vsub"
+
+            sub_inputs = []
+            if len(appearances) > 1:
+                sub_labels = "".join([f"[sub{i}]" for i in range(len(appearances))])
+                filter_parts.append(f"[subbase]split={len(appearances)}{sub_labels}")
+                sub_inputs = [f"sub{i}" for i in range(len(appearances))]
+            else:
+                sub_inputs = ["subbase"]
+
+            current_label = timeline_video_label
+            for i, t in enumerate(appearances):
+                sub_label = sub_inputs[i] if len(sub_inputs) > 1 else sub_inputs[0]
+                filter_parts.append(f"[{sub_label}]setpts=PTS+{t}/TB[subt{i}]")
+                filter_parts.append(
+                    f"[{current_label}][subt{i}]overlay=0:0:enable='between(t,{t},{t + subscribe_duration})':eof_action=pass[vsub{i}]"
+                )
+                current_label = f"vsub{i}"
+
+            final_video_label = current_label
 
             if subscribe_info.has_audio:
                 audio_filters = []
+                audio_filters.append(
+                    f"[{subscribe_idx}:a]atrim=duration={subscribe_duration},asetpts=PTS-STARTPTS[suba]"
+                )
+
+                suba_inputs = []
+                if len(appearances) > 1:
+                    suba_labels = "".join([f"[suba{i}]" for i in range(len(appearances))])
+                    audio_filters.append(f"[suba]asplit={len(appearances)}{suba_labels}")
+                    suba_inputs = [f"suba{i}" for i in range(len(appearances))]
+                else:
+                    suba_inputs = ["suba"]
+
+                audio_inputs = []
                 for i, t in enumerate(appearances):
                     delay_ms = int(t * 1000)
-                    audio_filters.append(f"[{subscribe_idx}:a]adelay={delay_ms}|{delay_ms}[suba{i}]")
+                    src = suba_inputs[i] if len(suba_inputs) > 1 else suba_inputs[0]
+                    audio_filters.append(f"[{src}]adelay={delay_ms}|{delay_ms}[subad{i}]")
+                    audio_inputs.append(f"[subad{i}]")
 
-                if audio_filters:
-                    mix_inputs = f"[{timeline_audio_label}]" + "".join(
-                        [f"[suba{i}]" for i in range(len(appearances))]
-                    )
+                if audio_inputs:
+                    mix_inputs = f"[{timeline_audio_label}]" + "".join(audio_inputs)
                     audio_filters.append(
-                        f"{mix_inputs}amix=inputs={len(appearances) + 1}:duration=first[asub]"
+                        f"{mix_inputs}amix=inputs={len(audio_inputs) + 1}:duration=first:dropout_transition=2[asub]"
                     )
                     filter_parts.extend(audio_filters)
                     final_audio_label = "asub"
@@ -1310,10 +1356,6 @@ class VideoProcessor:
         cmd.extend(["-c:a", audio_codec])
         if audio_codec != "copy" and preset_config.get("audio_bitrate"):
             cmd.extend(["-b:a", preset_config["audio_bitrate"]])
-
-        # If we loop subscribe graphics, force output to stop at the shortest stream
-        if has_subscribe:
-            cmd.extend(["-shortest"])
 
         cmd.append(output_path)
 

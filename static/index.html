@@ -36,6 +36,14 @@
                     </svg>
                     <span>Branding</span>
                 </button>
+                <button class="nav-item" data-view="thumbnails">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                        <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    <span>Thumbnails</span>
+                </button>
                 <button class="nav-item" data-view="outputs">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -336,6 +344,509 @@
                 </div>
             </section>
 
+            <!-- Thumbnails View -->
+            <section class="view" id="view-thumbnails">
+                <div class="view-header">
+                    <h2 class="view-title">Thumbnail Studio</h2>
+                    <p class="view-subtitle">Generate YouTube-ready thumbnails with overlays and video frame picks</p>
+                </div>
+
+                <div class="thumb-container">
+                    <div class="thumb-grid">
+                        <div class="thumb-column">
+                            <div class="card">
+                                <div class="card-header-with-actions">
+                                    <h3 class="card-title">Full Thumbnail Presets</h3>
+                                    <div class="preset-actions">
+                                        <select id="thumb-preset-select" class="form-select form-select-sm">
+                                            <option value="">Load Preset...</option>
+                                        </select>
+                                        <button type="button" id="thumb-save-preset" class="btn btn-outline btn-xs">Save</button>
+                                        <button type="button" id="thumb-update-preset" class="btn btn-outline btn-xs" disabled>Update</button>
+                                        <button type="button" id="thumb-delete-preset" class="btn btn-danger btn-xs" disabled>Delete</button>
+                                    </div>
+                                </div>
+                                <p class="card-subtitle">Saves overlay + numbering + output settings (backgrounds not included)</p>
+                            </div>
+
+                            <div class="card">
+                                <h3 class="card-title">Sources</h3>
+                                <div class="thumb-source-tabs">
+                                    <button class="tab-btn active" data-source="images">Images</button>
+                                    <button class="tab-btn" data-source="videos">Videos</button>
+                                </div>
+
+                                <div class="thumb-source-panel active" id="thumb-source-images">
+                                    <div class="file-drop-zone thumb-drop-zone" id="thumb-image-drop">
+                                        <div class="drop-content">
+                                            <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                                <polyline points="17 8 12 3 7 8"></polyline>
+                                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                                            </svg>
+                                            <p class="drop-text">Drop images here or click to browse</p>
+                                            <p class="drop-hint">Supports JPG, PNG, WebP</p>
+                                        </div>
+                                    </div>
+                                    <div class="thumb-source-actions">
+                                        <button class="btn btn-outline btn-sm" id="thumb-browse-images">Browse Images</button>
+                                    </div>
+                                    <div class="thumb-source-list" id="thumb-image-list"></div>
+                                </div>
+
+                                <div class="thumb-source-panel" id="thumb-source-videos">
+                                    <div class="thumb-source-actions">
+                                        <button class="btn btn-outline btn-sm" id="thumb-browse-videos">Browse Videos</button>
+                                    </div>
+                                    <div class="thumb-video-settings">
+                                        <div class="form-group">
+                                            <label class="form-label">Frame Count</label>
+                                            <input type="number" id="thumb-frame-count" class="form-input" value="12" min="4" max="40">
+                                            <p class="form-hint">Frames sampled across the video</p>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Frame Width</label>
+                                            <input type="number" id="thumb-frame-width" class="form-input" value="320" min="120" max="720">
+                                            <p class="form-hint">Preview size for frame strip</p>
+                                        </div>
+                                    </div>
+                                    <div class="thumb-video-list" id="thumb-video-list"></div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header-with-actions">
+                                    <h3 class="card-title">Selected Backgrounds</h3>
+                                    <button class="btn btn-ghost btn-xs" id="thumb-clear-backgrounds">Clear</button>
+                                </div>
+                                <div class="thumb-backgrounds-list" id="thumb-backgrounds-list"></div>
+                                <div class="thumb-backgrounds-summary" id="thumb-backgrounds-summary"></div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header-with-actions">
+                                    <h3 class="card-title">Overlay</h3>
+                                </div>
+                                <p class="card-subtitle">Overlay settings (saved in full presets)</p>
+
+                                <div class="overlay-mode-selector">
+                                    <label class="mode-option">
+                                        <input type="radio" name="thumb-overlay-mode" value="none" checked>
+                                        <div class="mode-card">
+                                            <div class="mode-icon">🚫</div>
+                                            <div class="mode-info">
+                                                <span class="mode-name">No Overlay</span>
+                                                <span class="mode-desc">Just the background image</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                    <label class="mode-option">
+                                        <input type="radio" name="thumb-overlay-mode" value="image">
+                                        <div class="mode-card">
+                                            <div class="mode-icon">🖼️</div>
+                                            <div class="mode-info">
+                                                <span class="mode-name">Overlay Image</span>
+                                                <span class="mode-desc">Apply a PNG overlay</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                    <label class="mode-option">
+                                        <input type="radio" name="thumb-overlay-mode" value="studio">
+                                        <div class="mode-card">
+                                            <div class="mode-icon">🎨</div>
+                                            <div class="mode-info">
+                                                <span class="mode-name">Studio Overlay</span>
+                                                <span class="mode-desc">Build text & layers</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                <div class="thumb-overlay-image" id="thumb-overlay-image" style="display: none;">
+                                    <div class="asset-content" id="thumb-overlay-asset">
+                                        <div class="asset-empty">
+                                            <button type="button" class="btn btn-outline btn-sm" id="thumb-browse-overlay">
+                                                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                                </svg>
+                                                Browse Overlay Image
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="asset-settings" id="thumb-overlay-settings" style="display: none;">
+                                        <div class="form-group">
+                                            <label class="form-label">Overlay Mode</label>
+                                            <select id="thumb-overlay-mode" class="form-select">
+                                                <option value="scale_to_canvas">Scale to Canvas</option>
+                                                <option value="fit_width">Fit Width</option>
+                                                <option value="fit_height">Fit Height</option>
+                                                <option value="center_original">Center Original</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Opacity</label>
+                                            <input type="range" id="thumb-overlay-opacity" min="10" max="100" value="100">
+                                            <p class="form-hint">Overlay transparency</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <h3 class="card-title">Output Settings</h3>
+                                <div class="settings-grid">
+                                    <div class="form-group">
+                                        <label class="form-label">Canvas Width</label>
+                                        <input type="number" id="thumb-width" class="form-input" value="1280" min="320" max="4000">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Canvas Height</label>
+                                        <input type="number" id="thumb-height" class="form-input" value="720" min="180" max="4000">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Fit Mode</label>
+                                        <select id="thumb-fit-mode" class="form-select">
+                                            <option value="cover">Cover (Crop)</option>
+                                            <option value="contain">Contain (Letterbox)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Background Color</label>
+                                        <div class="color-input-group">
+                                            <input type="color" id="thumb-bg-color-picker" class="color-input" value="#000000">
+                                            <input type="text" id="thumb-bg-color" class="form-input" value="#000000">
+                                        </div>
+                                        <p class="form-hint">Used for contain mode + JPEG</p>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Output Format</label>
+                                        <select id="thumb-output-format" class="form-select">
+                                            <option value="jpeg">JPEG</option>
+                                            <option value="png">PNG</option>
+                                            <option value="webp">WebP</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Filename Suffix</label>
+                                        <input type="text" id="thumb-filename-suffix" class="form-input" value="_thumb">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Optimize Size</label>
+                                        <label class="toggle">
+                                            <input type="checkbox" id="thumb-optimize" checked>
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label">Target YouTube size</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-group" id="thumb-max-bytes-group">
+                                        <label class="form-label">Max Bytes</label>
+                                        <input type="number" id="thumb-max-bytes" class="form-input" value="2097152" min="512000" step="1024">
+                                        <p class="form-hint">2MB default</p>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Strip Metadata</label>
+                                        <label class="toggle">
+                                            <input type="checkbox" id="thumb-strip-metadata" checked>
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label">Remove EXIF data</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Output Folder</label>
+                                        <div class="input-with-button">
+                                            <input type="text" id="thumb-output-dir" class="form-input" placeholder="Default output folder">
+                                            <button type="button" class="btn btn-ghost btn-xs" id="thumb-output-dir-browse">Browse</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="thumb-numbering">
+                                    <label class="toggle">
+                                        <input type="checkbox" id="thumb-numbering">
+                                        <span class="toggle-slider"></span>
+                                        <span class="toggle-label">Add numbering</span>
+                                    </label>
+                                    <div class="thumb-numbering-settings" id="thumb-numbering-settings" style="display: none;">
+                                        <div class="settings-grid">
+                                            <div class="form-group">
+                                                <label class="form-label">Start</label>
+                                                <input type="number" id="thumb-number-start" class="form-input" value="1" min="1">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Position</label>
+                                                <select id="thumb-number-position" class="form-select">
+                                                    <option value="top-left">Top Left</option>
+                                                    <option value="top-right">Top Right</option>
+                                                    <option value="bottom-left">Bottom Left</option>
+                                                    <option value="bottom-right" selected>Bottom Right</option>
+                                                    <option value="center">Center</option>
+                                                    <option value="custom">Custom (drag)</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Margin</label>
+                                                <input type="number" id="thumb-number-margin" class="form-input" value="24" min="0">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Font Size</label>
+                                                <input type="number" id="thumb-number-size" class="form-input" value="0" min="0">
+                                                <p class="form-hint">0 = auto</p>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Line Spacing</label>
+                                                <div class="decimal-stepper">
+                                                    <input type="text" id="thumb-number-line-height" class="form-input" value="1.1" inputmode="decimal">
+                                                    <div class="decimal-stepper-btns">
+                                                        <button type="button" class="decimal-stepper-btn" data-target="thumb-number-line-height" data-step="0.1" data-direction="up" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                        <button type="button" class="decimal-stepper-btn" data-target="thumb-number-line-height" data-step="0.1" data-direction="down" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Character Spacing</label>
+                                                <div class="decimal-stepper">
+                                                    <input type="text" id="thumb-number-letter-spacing" class="form-input" value="0" inputmode="decimal">
+                                                    <div class="decimal-stepper-btns">
+                                                        <button type="button" class="decimal-stepper-btn" data-target="thumb-number-letter-spacing" data-step="0.5" data-direction="up" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                        <button type="button" class="decimal-stepper-btn" data-target="thumb-number-letter-spacing" data-step="0.5" data-direction="down" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Fill</label>
+                                                <label class="toggle">
+                                                    <input type="checkbox" id="thumb-number-fill-enabled" checked>
+                                                    <span class="toggle-slider"></span>
+                                                    <span class="toggle-label">Fill On</span>
+                                                </label>
+                                                <div class="color-input-group">
+                                                    <input type="color" id="thumb-number-fill-picker" class="color-input" value="#ffffff">
+                                                    <input type="text" id="thumb-number-fill" class="form-input" value="#ffffff">
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Stroke</label>
+                                                <label class="toggle">
+                                                    <input type="checkbox" id="thumb-number-stroke-enabled">
+                                                    <span class="toggle-slider"></span>
+                                                    <span class="toggle-label">Stroke On</span>
+                                                </label>
+                                                <div class="color-input-group">
+                                                    <input type="color" id="thumb-number-stroke-picker" class="color-input" value="#000000">
+                                                    <input type="text" id="thumb-number-stroke" class="form-input" value="#000000">
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Stroke Width</label>
+                                                <input type="number" id="thumb-number-stroke-width" class="form-input" value="4" min="0">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Font</label>
+                                                <input type="hidden" id="thumb-number-font" value="">
+                                                <div class="font-picker" data-target="thumb-number-font">
+                                                    <div class="font-selected" id="thumb-number-font-selected">Auto</div>
+                                                    <input type="text" id="thumb-number-font-search" class="form-input font-search" placeholder="Search fonts">
+                                                    <div class="font-list" id="thumb-number-font-list"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="action-bar">
+                                <button class="btn btn-primary btn-lg" id="thumb-generate-btn" disabled>
+                                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                    </svg>
+                                    <span>Generate Thumbnails</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="thumb-column">
+                            <div class="card studio-card">
+                                <div class="card-header-with-actions">
+                                    <h3 class="card-title">Studio Overlay Builder</h3>
+                                    <div class="preset-actions">
+                                        <button type="button" class="btn btn-outline btn-xs" id="studio-add-text">Add Text</button>
+                                        <button type="button" class="btn btn-outline btn-xs" id="studio-add-image">Add Image</button>
+                                        <button type="button" class="btn btn-ghost btn-xs" id="studio-duplicate">Duplicate</button>
+                                        <button type="button" class="btn btn-danger btn-xs" id="studio-delete">Delete</button>
+                                    </div>
+                                </div>
+                                <div class="studio-toolbar">
+                                    <button type="button" class="btn btn-ghost btn-xs studio-mode-btn active" data-mode="resize">Resize Text Area</button>
+                                    <button type="button" class="btn btn-ghost btn-xs studio-mode-btn" data-mode="scale">Scale</button>
+                                </div>
+
+                                <div class="studio-canvas-wrap" id="studio-canvas-wrap">
+                                    <div class="studio-canvas" id="studio-canvas"></div>
+                                    <div class="studio-empty" id="studio-empty">Select a background to preview</div>
+                                </div>
+
+                                <div class="studio-properties" id="studio-properties">
+                                    <div class="studio-placeholder">Select an element to edit its properties</div>
+
+                                    <div class="studio-section" id="studio-text-section" style="display: none;">
+                                        <h4 class="settings-subtitle">Text Settings</h4>
+                                        <div class="settings-grid">
+                                            <div class="form-group">
+                                                <label class="form-label">Text</label>
+                                                <textarea id="studio-text" class="form-textarea" rows="3" placeholder="Enter text"></textarea>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Font</label>
+                                                <input type="hidden" id="studio-font" value="">
+                                                <div class="font-picker" data-target="studio-font">
+                                                    <div class="font-selected" id="studio-font-selected">Default</div>
+                                                    <input type="text" id="studio-font-search" class="form-input font-search" placeholder="Search fonts">
+                                                    <div class="font-list" id="studio-font-list"></div>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Font Size</label>
+                                                <input type="number" id="studio-font-size" class="form-input" value="64" min="8">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Fill</label>
+                                                <label class="toggle">
+                                                    <input type="checkbox" id="studio-fill-enabled" checked>
+                                                    <span class="toggle-slider"></span>
+                                                    <span class="toggle-label">Fill On</span>
+                                                </label>
+                                                <div class="color-input-group">
+                                                    <input type="color" id="studio-text-fill-picker" class="color-input" value="#ffffff">
+                                                    <input type="text" id="studio-text-fill" class="form-input" value="#ffffff">
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Stroke</label>
+                                                <label class="toggle">
+                                                    <input type="checkbox" id="studio-stroke-enabled">
+                                                    <span class="toggle-slider"></span>
+                                                    <span class="toggle-label">Stroke On</span>
+                                                </label>
+                                                <div class="color-input-group">
+                                                    <input type="color" id="studio-text-stroke-picker" class="color-input" value="#000000">
+                                                    <input type="text" id="studio-text-stroke" class="form-input" value="#000000">
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Stroke Width</label>
+                                                <input type="number" id="studio-text-stroke-width" class="form-input" value="8" min="0">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Align</label>
+                                                <select id="studio-text-align" class="form-select">
+                                                    <option value="left">Left</option>
+                                                    <option value="center">Center</option>
+                                                    <option value="right">Right</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Line Spacing</label>
+                                                <div class="decimal-stepper">
+                                                    <input type="text" id="studio-line-height" class="form-input" value="1.1" inputmode="decimal">
+                                                    <div class="decimal-stepper-btns">
+                                                        <button type="button" class="decimal-stepper-btn" data-target="studio-line-height" data-step="0.1" data-direction="up" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                        <button type="button" class="decimal-stepper-btn" data-target="studio-line-height" data-step="0.1" data-direction="down" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Character Spacing</label>
+                                                <div class="decimal-stepper">
+                                                    <input type="text" id="studio-letter-spacing" class="form-input" value="0" inputmode="decimal">
+                                                    <div class="decimal-stepper-btns">
+                                                        <button type="button" class="decimal-stepper-btn" data-target="studio-letter-spacing" data-step="0.5" data-direction="up" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                        <button type="button" class="decimal-stepper-btn" data-target="studio-letter-spacing" data-step="0.5" data-direction="down" tabindex="-1">
+                                                            <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Opacity</label>
+                                                <input type="range" id="studio-text-opacity" min="10" max="100" value="100">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="studio-section" id="studio-image-section" style="display: none;">
+                                        <h4 class="settings-subtitle">Image Settings</h4>
+                                        <div class="settings-grid">
+                                            <div class="form-group">
+                                                <label class="form-label">Opacity</label>
+                                                <input type="range" id="studio-image-opacity" min="10" max="100" value="100">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Preserve Aspect</label>
+                                                <label class="toggle">
+                                                    <input type="checkbox" id="studio-image-aspect" checked>
+                                                    <span class="toggle-slider"></span>
+                                                    <span class="toggle-label">Lock ratio</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="studio-section" id="studio-geometry-section" style="display: none;">
+                                        <h4 class="settings-subtitle">Position & Size</h4>
+                                        <div class="settings-grid">
+                                            <div class="form-group">
+                                                <label class="form-label">X</label>
+                                                <input type="number" id="studio-x" class="form-input" min="0">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Y</label>
+                                                <input type="number" id="studio-y" class="form-input" min="0">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Width</label>
+                                                <input type="number" id="studio-width" class="form-input" min="1">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Height</label>
+                                                <input type="number" id="studio-height" class="form-input" min="1">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="progress-overlay" id="thumb-progress-overlay" style="display: none;">
+                    <div class="progress-card">
+                        <div class="progress-header">
+                            <h3 class="progress-title">Generating Thumbnails...</h3>
+                            <button class="btn btn-ghost btn-sm" id="thumb-cancel-btn">Cancel</button>
+                        </div>
+                        <div class="progress-step" id="thumb-progress-step">Initializing...</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="thumb-progress-bar"></div>
+                        </div>
+                        <div class="progress-percent" id="thumb-progress-percent">0%</div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Outputs View -->
             <section class="view" id="view-outputs">
                 <div class="view-header">
@@ -506,6 +1017,28 @@
                 <button type="button" class="btn btn-ghost" id="modal-cancel">Cancel</button>
                 <button type="button" class="btn btn-danger btn-sm" id="modal-delete" style="display: none;">Delete</button>
                 <button type="submit" class="btn btn-primary" id="modal-save" form="branding-form">Save Branding</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Thumbnail Preset Modal -->
+    <div class="modal" id="thumb-preset-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="thumb-preset-modal-title">Save Thumbnail Preset</h3>
+                <button class="modal-close" id="thumb-preset-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Preset Name</label>
+                    <input type="text" id="thumb-preset-name" class="form-input" placeholder="e.g., Gaming 1280x720">
+                    <p class="form-hint">Stores overlay, numbering, and output settings</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-ghost" id="thumb-preset-modal-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="thumb-preset-modal-save">Save Preset</button>
             </div>
         </div>
     </div>

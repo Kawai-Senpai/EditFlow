@@ -10,9 +10,12 @@ DATA_DIR = BASE_DIR / "data"
 PROFILES_DIR = DATA_DIR / "profiles"
 TEMP_DIR = DATA_DIR / "temp"
 OUTPUT_DIR = DATA_DIR / "output"
+THUMBNAILS_DIR = DATA_DIR / "thumbnails"
+THUMBNAIL_FRAMES_DIR = TEMP_DIR / "thumbnail_frames"
+THUMBNAIL_SETTINGS_PRESETS_FILE = THUMBNAILS_DIR / "thumbnail_presets.json"
 
 # Ensure directories exist
-for dir_path in [DATA_DIR, PROFILES_DIR, TEMP_DIR, OUTPUT_DIR]:
+for dir_path in [DATA_DIR, PROFILES_DIR, TEMP_DIR, OUTPUT_DIR, THUMBNAILS_DIR, THUMBNAIL_FRAMES_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
 
 # Server settings

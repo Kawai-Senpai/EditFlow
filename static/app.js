@@ -11,7 +11,27 @@ const state = {
     currentJob: null,
     editingProfile: null,
     renderPresets: [],
-    selectedPresetId: null
+    selectedPresetId: null,
+    thumbnail: {
+        images: [],
+        videos: [],
+        framesByVideo: {},
+        backgrounds: [],
+        presets: [],
+        selectedPresetId: null,
+        overlayMode: 'none',
+        overlayImage: { path: null, mode: 'scale_to_canvas', opacity: 1 },
+        studio: {
+            canvasWidth: 1280,
+            canvasHeight: 720,
+            elements: [],
+            selectedId: null,
+            editingId: null,
+            transformMode: 'resize'
+        },
+        fonts: [],
+        jobId: null
+    }
 };
 
 // ============== API ==============
@@ -113,6 +133,7 @@ function initNavigation() {
             document.getElementById(`view-${viewName}`).classList.add('active');
             
             if (viewName === 'branding') loadBranding();
+            if (viewName === 'thumbnails') loadThumbnailView();
             if (viewName === 'outputs') loadOutputs();
         });
     });
@@ -1141,6 +1162,1574 @@ async function deleteBranding() {
     }
 }
 
+// ============== Thumbnails ==============
+let studioDragState = null;
+let studioTextEditor = null;
+
+function loadThumbnailView() {
+    if (!state.thumbnail.fonts.length) {
+        loadThumbnailFonts();
+    }
+    if (!state.thumbnail.presets.length) {
+        loadThumbnailPresets();
+    }
+    renderThumbnailImages();
+    renderThumbnailVideos();
+    renderThumbnailBackgrounds();
+    updateThumbnailPreview();
+    updateThumbnailGenerateButton();
+    updateStudioCanvasDimensions();
+}
+
+function initThumbnailStudio() {
+    initThumbnailSources();
+    initThumbnailPresets();
+    initThumbnailOverlay();
+    initThumbnailOutputSettings();
+    initStudioBuilder();
+    initThumbnailGeneration();
+    initThumbnailPresetModal();
+}
+
+function initThumbnailSources() {
+    document.querySelectorAll('.thumb-source-tabs .tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => setThumbnailSourceTab(btn.dataset.source));
+    });
+
+    const imageDrop = document.getElementById('thumb-image-drop');
+    imageDrop.addEventListener('click', browseThumbnailImages);
+    imageDrop.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        imageDrop.classList.add('dragover');
+    });
+    imageDrop.addEventListener('dragleave', () => imageDrop.classList.remove('dragover'));
+    imageDrop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        imageDrop.classList.remove('dragover');
+
+        const paths = [];
+        const textData = e.dataTransfer.getData('text/plain');
+        if (textData) {
+            const lines = textData.split(/[\r\n]+/).filter(l => l.trim());
+            for (const line of lines) {
+                let path = line.trim();
+                if (path.startsWith('file:///')) {
+                    path = decodeURIComponent(path.replace('file:///', ''));
+                    if (path.match(/^[a-zA-Z]:/)) {
+                        path = path.replace(/\//g, '\\');
+                    }
+                }
+                if (path.match(/\.(jpg|jpeg|png|webp)$/i)) {
+                    paths.push(path);
+                }
+            }
+        }
+
+        if (paths.length > 0) {
+            addThumbnailImages(paths);
+        } else {
+            showToast('Drag not detected - opening file browser...', 'info');
+            browseThumbnailImages();
+        }
+    });
+
+    document.getElementById('thumb-browse-images').addEventListener('click', browseThumbnailImages);
+    document.getElementById('thumb-browse-videos').addEventListener('click', browseThumbnailVideos);
+    document.getElementById('thumb-clear-backgrounds').addEventListener('click', clearThumbnailBackgrounds);
+}
+
+function setThumbnailSourceTab(source) {
+    document.querySelectorAll('.thumb-source-tabs .tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.source === source);
+    });
+    document.querySelectorAll('.thumb-source-panel').forEach(panel => {
+        panel.classList.toggle('active', panel.id === `thumb-source-${source}`);
+    });
+}
+
+async function browseThumbnailImages() {
+    try {
+        const result = await API.post('/browse/images', {});
+        if (result.cancelled) return;
+        if (result.paths?.length) addThumbnailImages(result.paths);
+    } catch (err) {
+        showToast(`Failed to browse images: ${err.message}`, 'error');
+    }
+}
+
+async function browseThumbnailVideos() {
+    try {
+        const result = await API.post('/browse/videos', {});
+        if (result.cancelled) return;
+        if (result.paths?.length) addThumbnailVideos(result.paths);
+    } catch (err) {
+        showToast(`Failed to browse videos: ${err.message}`, 'error');
+    }
+}
+
+function addThumbnailImages(paths) {
+    const added = [];
+    for (const path of paths) {
+        if (state.thumbnail.images.some(img => img.path.toLowerCase() === path.toLowerCase())) {
+            continue;
+        }
+        const name = path.split(/[\\/]/).pop();
+        state.thumbnail.images.push({ path, name });
+        added.push({ path, name });
+    }
+    if (added.length) {
+        added.forEach(item => addThumbnailBackground(item.path, item.name));
+        renderThumbnailImages();
+        renderThumbnailBackgrounds();
+        updateThumbnailPreview();
+        updateThumbnailGenerateButton();
+    }
+}
+
+function addThumbnailVideos(paths) {
+    let changed = false;
+    for (const path of paths) {
+        if (state.thumbnail.videos.some(v => v.path.toLowerCase() === path.toLowerCase())) {
+            continue;
+        }
+        const name = path.split(/[\\/]/).pop();
+        state.thumbnail.videos.push({ path, name });
+        changed = true;
+    }
+    if (changed) {
+        renderThumbnailVideos();
+    }
+}
+
+function renderThumbnailImages() {
+    const list = document.getElementById('thumb-image-list');
+    if (!state.thumbnail.images.length) {
+        list.innerHTML = '<div class="outputs-empty">No images added yet</div>';
+        return;
+    }
+    list.innerHTML = state.thumbnail.images.map((img, index) => {
+        const preview = getThumbnailPreviewUrl(img.path);
+        return `
+            <div class="thumb-source-item">
+                <img class="thumb-source-thumb" src="${preview}" alt="${img.name}">
+                <div class="thumb-source-name" title="${img.path}">${img.name}</div>
+                <button class="file-remove" onclick="removeThumbnailImage(${index})" title="Remove">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+function removeThumbnailImage(index) {
+    const removed = state.thumbnail.images.splice(index, 1)[0];
+    if (removed) {
+        removeThumbnailBackground(removed.path);
+        renderThumbnailImages();
+        renderThumbnailBackgrounds();
+        updateThumbnailPreview();
+        updateThumbnailGenerateButton();
+    }
+}
+
+function removeThumbnailVideo(index) {
+    const removed = state.thumbnail.videos.splice(index, 1)[0];
+    if (!removed) return;
+    const frames = state.thumbnail.framesByVideo[removed.path] || [];
+    const framePaths = new Set(frames.map(f => f.path.toLowerCase()));
+    state.thumbnail.backgrounds = state.thumbnail.backgrounds.filter(bg => !framePaths.has(bg.path.toLowerCase()));
+    delete state.thumbnail.framesByVideo[removed.path];
+    renderThumbnailVideos();
+    renderThumbnailBackgrounds();
+    updateThumbnailPreview();
+    updateThumbnailGenerateButton();
+}
+
+function renderThumbnailVideos() {
+    const list = document.getElementById('thumb-video-list');
+    if (!state.thumbnail.videos.length) {
+        list.innerHTML = '<div class="outputs-empty">No videos added yet</div>';
+        return;
+    }
+
+    list.innerHTML = state.thumbnail.videos.map((video, index) => {
+        const frames = state.thumbnail.framesByVideo[video.path] || [];
+        return `
+            <div class="thumb-video-item">
+                <div class="thumb-video-header">
+                    <div class="thumb-video-title" title="${video.path}">${video.name}</div>
+                    <div class="output-actions">
+                        <button class="btn btn-ghost btn-xs" onclick="removeThumbnailVideo(${index})">Remove</button>
+                        <button class="btn btn-outline btn-xs" onclick="generateFramesForVideo(${index})">Generate Frames</button>
+                    </div>
+                </div>
+                <div class="thumb-frame-strip" id="thumb-frames-${index}">
+                    ${frames.length ? renderFrameStrip(frames, video.path) : '<div class="drop-hint">Generate a frame strip to pick thumbnails</div>'}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderFrameStrip(frames, videoPath) {
+    return frames.map((frame, idx) => {
+        const preview = getThumbnailPreviewUrl(frame.path);
+        const isSelected = state.thumbnail.backgrounds.some(bg => bg.path.toLowerCase() === frame.path.toLowerCase());
+        const label = frame.timestamp_formatted || '';
+        return `
+            <div class="thumb-frame ${isSelected ? 'selected' : ''}" onclick='toggleThumbnailFrame(${JSON.stringify(videoPath)}, ${idx})'>
+                <img src="${preview}" alt="Frame ${idx + 1}">
+                <div class="thumb-frame-label">${label}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function generateFramesForVideo(index) {
+    const video = state.thumbnail.videos[index];
+    if (!video) return;
+
+    const strip = document.getElementById(`thumb-frames-${index}`);
+    strip.innerHTML = Array(6).fill('<div class="thumb-frame skeleton"></div>').join('');
+
+    try {
+        const frameCount = parseInt(document.getElementById('thumb-frame-count').value) || 12;
+        const frameWidth = parseInt(document.getElementById('thumb-frame-width').value) || 320;
+        const result = await API.post('/thumbnails/frames', {
+            video_path: video.path,
+            frame_count: frameCount,
+            scale_width: frameWidth
+        });
+        state.thumbnail.framesByVideo[video.path] = result.frames || [];
+        renderThumbnailVideos();
+    } catch (err) {
+        showToast(`Failed to extract frames: ${err.message}`, 'error');
+        strip.innerHTML = '<div class="drop-hint">Failed to load frames</div>';
+    }
+}
+
+function toggleThumbnailFrame(videoPath, frameIndex) {
+    const frames = state.thumbnail.framesByVideo[videoPath] || [];
+    const frame = frames[frameIndex];
+    if (!frame) return;
+
+    const exists = state.thumbnail.backgrounds.some(bg => bg.path.toLowerCase() === frame.path.toLowerCase());
+    if (exists) {
+        removeThumbnailBackground(frame.path);
+    } else {
+        const base = PathBasename(videoPath).replace(/\.[^/.]+$/, '');
+        const name = `${base}_frame_${String(frameIndex + 1).padStart(2, '0')}`;
+        addThumbnailBackground(frame.path, name);
+    }
+    renderThumbnailBackgrounds();
+    renderThumbnailVideos();
+    updateThumbnailPreview();
+    updateThumbnailGenerateButton();
+}
+
+function addThumbnailBackground(path, name) {
+    if (state.thumbnail.backgrounds.some(bg => bg.path.toLowerCase() === path.toLowerCase())) {
+        return;
+    }
+    state.thumbnail.backgrounds.push({ path, name: name || PathBasename(path) });
+}
+
+function removeThumbnailBackground(path) {
+    state.thumbnail.backgrounds = state.thumbnail.backgrounds.filter(bg => bg.path.toLowerCase() !== path.toLowerCase());
+    state.thumbnail.images = state.thumbnail.images.filter(img => img.path.toLowerCase() !== path.toLowerCase());
+}
+
+function clearThumbnailBackgrounds() {
+    state.thumbnail.backgrounds = [];
+    state.thumbnail.images = [];
+    renderThumbnailBackgrounds();
+    renderThumbnailImages();
+    renderThumbnailVideos();
+    updateThumbnailPreview();
+    updateThumbnailGenerateButton();
+}
+
+function renderThumbnailBackgrounds() {
+    const list = document.getElementById('thumb-backgrounds-list');
+    const summary = document.getElementById('thumb-backgrounds-summary');
+
+    if (!state.thumbnail.backgrounds.length) {
+        list.innerHTML = '<div class="outputs-empty">No backgrounds selected</div>';
+        summary.textContent = '';
+        return;
+    }
+
+    list.innerHTML = state.thumbnail.backgrounds.map(bg => {
+        const preview = getThumbnailPreviewUrl(bg.path);
+        return `
+            <div class="thumb-background-card">
+                <img src="${preview}" alt="${bg.name}">
+                <div class="thumb-background-meta" title="${bg.path}">${bg.name}</div>
+                <button class="thumb-background-remove" onclick='removeThumbnailBackgroundAction(${JSON.stringify(bg.path)})'>×</button>
+            </div>
+        `;
+    }).join('');
+
+    summary.textContent = `${state.thumbnail.backgrounds.length} background${state.thumbnail.backgrounds.length > 1 ? 's' : ''} selected`;
+}
+
+function removeThumbnailBackgroundAction(path) {
+    removeThumbnailBackground(path);
+    renderThumbnailBackgrounds();
+    renderThumbnailVideos();
+    updateThumbnailPreview();
+    updateThumbnailGenerateButton();
+}
+
+function updateThumbnailPreview() {
+    const canvas = document.getElementById('studio-canvas');
+    const empty = document.getElementById('studio-empty');
+    if (!canvas || !empty) return;
+
+    if (state.thumbnail.backgrounds.length) {
+        const bg = state.thumbnail.backgrounds[0];
+        canvas.style.backgroundImage = `url('${getThumbnailPreviewUrl(bg.path)}')`;
+        empty.style.display = 'none';
+    } else {
+        canvas.style.backgroundImage = 'none';
+        empty.style.display = 'flex';
+    }
+}
+
+function updateThumbnailGenerateButton() {
+    const btn = document.getElementById('thumb-generate-btn');
+    btn.disabled = state.thumbnail.backgrounds.length === 0;
+}
+
+function isValidHexColor(value) {
+    return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value || '');
+}
+
+function getNumberingElement() {
+    return state.thumbnail.studio.elements.find(el => el.type === 'numbering');
+}
+
+function toggleNumberingElement(enabled) {
+    const existing = getNumberingElement();
+    if (enabled) {
+        if (!existing) {
+            const element = {
+                id: `num-${Date.now()}`,
+                type: 'numbering',
+                text: '01',
+                x: 980,
+                y: 520,
+                width: 180,
+                height: 120,
+                fontFamily: 'Inter',
+                fontPath: document.getElementById('thumb-number-font').value || '',
+                fontSize: parseInt(document.getElementById('thumb-number-size').value) || 64,
+                fill: document.getElementById('thumb-number-fill').value || '#ffffff',
+                fillEnabled: document.getElementById('thumb-number-fill-enabled').checked,
+                stroke: document.getElementById('thumb-number-stroke').value || '#000000',
+                strokeWidth: parseInt(document.getElementById('thumb-number-stroke-width').value) || 4,
+                strokeEnabled: document.getElementById('thumb-number-stroke-enabled').checked,
+                align: 'left',
+                opacity: 1,
+                lineHeight: parseFloat(document.getElementById('thumb-number-line-height').value) || 1.1,
+                letterSpacing: parseFloat(document.getElementById('thumb-number-letter-spacing').value) || 0
+            };
+            state.thumbnail.studio.elements.push(element);
+            selectStudioElement(element.id);
+            document.getElementById('thumb-number-position').value = 'custom';
+        }
+    } else if (existing) {
+        state.thumbnail.studio.elements = state.thumbnail.studio.elements.filter(el => el.type !== 'numbering');
+        if (state.thumbnail.studio.selectedId === existing.id) {
+            state.thumbnail.studio.selectedId = null;
+        }
+    }
+    renderStudioElements();
+    toggleThumbnailOverlayMode();
+}
+
+function syncNumberingElementFromForm() {
+    const element = getNumberingElement();
+    if (!element) return;
+
+    const fillEnabled = document.getElementById('thumb-number-fill-enabled').checked;
+    const strokeEnabled = document.getElementById('thumb-number-stroke-enabled').checked;
+    document.getElementById('thumb-number-fill').disabled = !fillEnabled;
+    document.getElementById('thumb-number-fill-picker').disabled = !fillEnabled;
+    document.getElementById('thumb-number-stroke').disabled = !strokeEnabled;
+    document.getElementById('thumb-number-stroke-picker').disabled = !strokeEnabled;
+
+    element.fontPath = document.getElementById('thumb-number-font').value || '';
+    element.fontFamily = getFontNameByPath(element.fontPath) || 'Inter';
+    element.fontSize = parseInt(document.getElementById('thumb-number-size').value) || element.fontSize;
+    element.lineHeight = parseFloat(document.getElementById('thumb-number-line-height').value) || element.lineHeight || 1.1;
+    element.letterSpacing = parseFloat(document.getElementById('thumb-number-letter-spacing').value) || element.letterSpacing || 0;
+    element.fill = document.getElementById('thumb-number-fill').value || element.fill;
+    element.fillEnabled = fillEnabled;
+    element.stroke = document.getElementById('thumb-number-stroke').value || element.stroke;
+    element.strokeWidth = parseInt(document.getElementById('thumb-number-stroke-width').value) || element.strokeWidth;
+    element.strokeEnabled = strokeEnabled;
+    element.text = '01';
+
+    renderStudioElements();
+}
+
+function applyNumberingPositionPreset(position) {
+    const element = getNumberingElement();
+    if (!element || position === 'custom') return;
+
+    const margin = parseInt(document.getElementById('thumb-number-margin').value) || 24;
+    const canvasW = state.thumbnail.studio.canvasWidth;
+    const canvasH = state.thumbnail.studio.canvasHeight;
+
+    if (position === 'top-left') {
+        element.x = margin;
+        element.y = margin;
+    } else if (position === 'top-right') {
+        element.x = Math.max(0, canvasW - element.width - margin);
+        element.y = margin;
+    } else if (position === 'bottom-left') {
+        element.x = margin;
+        element.y = Math.max(0, canvasH - element.height - margin);
+    } else if (position === 'center') {
+        element.x = Math.max(0, (canvasW - element.width) / 2);
+        element.y = Math.max(0, (canvasH - element.height) / 2);
+    } else {
+        element.x = Math.max(0, canvasW - element.width - margin);
+        element.y = Math.max(0, canvasH - element.height - margin);
+    }
+
+    renderStudioElements();
+}
+
+function initThumbnailOverlay() {
+    document.querySelectorAll('input[name="thumb-overlay-mode"]').forEach(input => {
+        input.addEventListener('change', () => {
+            state.thumbnail.overlayMode = input.value;
+            toggleThumbnailOverlayMode();
+        });
+    });
+
+    document.getElementById('thumb-browse-overlay').addEventListener('click', browseThumbnailOverlayImage);
+    document.getElementById('thumb-overlay-opacity').addEventListener('input', () => {
+        state.thumbnail.overlayImage.opacity = (parseInt(document.getElementById('thumb-overlay-opacity').value) || 100) / 100;
+    });
+    document.getElementById('thumb-overlay-mode').addEventListener('change', (e) => {
+        state.thumbnail.overlayImage.mode = e.target.value;
+    });
+
+    toggleThumbnailOverlayMode();
+}
+
+function initThumbnailPresets() {
+    document.getElementById('thumb-preset-select').addEventListener('change', (e) => {
+        const presetId = e.target.value || null;
+        if (!presetId) {
+            state.thumbnail.selectedPresetId = null;
+            updateThumbnailPresetButtons();
+            return;
+        }
+        const preset = state.thumbnail.presets.find(p => p.id === presetId);
+        if (preset) applyThumbnailPreset(preset);
+    });
+
+    document.getElementById('thumb-save-preset').addEventListener('click', openThumbnailPresetModal);
+    document.getElementById('thumb-update-preset').addEventListener('click', updateThumbnailPreset);
+    document.getElementById('thumb-delete-preset').addEventListener('click', deleteThumbnailPreset);
+}
+
+async function loadThumbnailPresets() {
+    try {
+        const presets = await API.get('/thumbnails/presets');
+        state.thumbnail.presets = presets || [];
+        renderThumbnailPresets();
+    } catch (err) {
+        showToast('Failed to load thumbnail presets', 'error');
+    }
+}
+
+function renderThumbnailPresets() {
+    const select = document.getElementById('thumb-preset-select');
+    select.innerHTML = '<option value="">Load Preset...</option>';
+    state.thumbnail.presets.forEach(preset => {
+        select.innerHTML += `<option value="${preset.id}">${preset.name}</option>`;
+    });
+    updateThumbnailPresetButtons();
+}
+
+function applyThumbnailPreset(preset) {
+    state.thumbnail.selectedPresetId = preset.id;
+    const settings = preset.settings || {};
+
+    if (settings.resize) {
+        document.getElementById('thumb-width').value = settings.resize.width || 1280;
+        document.getElementById('thumb-height').value = settings.resize.height || 720;
+        document.getElementById('thumb-fit-mode').value = settings.resize.fit_mode || 'cover';
+        document.getElementById('thumb-bg-color').value = settings.resize.background || '#000000';
+        document.getElementById('thumb-bg-color-picker').value = settings.resize.background || '#000000';
+        updateStudioCanvasDimensions();
+    }
+
+    if (settings.output_format) {
+        document.getElementById('thumb-output-format').value = settings.output_format;
+    }
+    if (settings.filename_suffix) {
+        document.getElementById('thumb-filename-suffix').value = settings.filename_suffix;
+    }
+    document.getElementById('thumb-output-dir').value = settings.output_dir || '';
+    document.getElementById('thumb-strip-metadata').checked = settings.strip_metadata !== false;
+
+    if (settings.optimize) {
+        document.getElementById('thumb-optimize').checked = settings.optimize.enabled !== false;
+        document.getElementById('thumb-max-bytes').value = settings.optimize.max_bytes || 2097152;
+    }
+    document.getElementById('thumb-max-bytes-group').style.display =
+        document.getElementById('thumb-optimize').checked ? 'block' : 'none';
+
+    if (settings.overlay) {
+        applyOverlaySettings(settings.overlay);
+    }
+
+    if (settings.numbering) {
+        document.getElementById('thumb-numbering').checked = settings.numbering.enabled === true;
+        document.getElementById('thumb-numbering-settings').style.display = settings.numbering.enabled ? 'block' : 'none';
+        document.getElementById('thumb-number-start').value = settings.numbering.start || 1;
+        document.getElementById('thumb-number-margin').value = settings.numbering.margin || 24;
+        document.getElementById('thumb-number-position').value = settings.numbering.position || 'bottom-right';
+        document.getElementById('thumb-number-size').value = settings.numbering.font_size || 0;
+        document.getElementById('thumb-number-line-height').value = settings.numbering.line_height || 1.1;
+        document.getElementById('thumb-number-letter-spacing').value = settings.numbering.letter_spacing || 0;
+        document.getElementById('thumb-number-fill').value = settings.numbering.fill || '#ffffff';
+        document.getElementById('thumb-number-fill-picker').value = settings.numbering.fill || '#ffffff';
+        document.getElementById('thumb-number-fill-enabled').checked = settings.numbering.fill_enabled !== false;
+        document.getElementById('thumb-number-stroke').value = settings.numbering.stroke_fill || '#000000';
+        document.getElementById('thumb-number-stroke-picker').value = settings.numbering.stroke_fill || '#000000';
+        document.getElementById('thumb-number-stroke-enabled').checked = settings.numbering.stroke_enabled !== false;
+        document.getElementById('thumb-number-stroke-width').value = settings.numbering.stroke_width || 4;
+        setFontPickerSelection('thumb-number-font', settings.numbering.font_path, 'Auto');
+
+        toggleNumberingElement(settings.numbering.enabled === true);
+        const numberElement = getNumberingElement();
+        if (numberElement) {
+            numberElement.x = settings.numbering.x ?? numberElement.x;
+            numberElement.y = settings.numbering.y ?? numberElement.y;
+            if (settings.numbering.element?.width) numberElement.width = settings.numbering.element.width;
+            if (settings.numbering.element?.height) numberElement.height = settings.numbering.element.height;
+            numberElement.lineHeight = settings.numbering.line_height ?? numberElement.lineHeight;
+            numberElement.letterSpacing = settings.numbering.letter_spacing ?? numberElement.letterSpacing;
+            syncNumberingElementFromForm();
+        }
+    }
+
+    updateThumbnailPresetButtons();
+}
+
+function applyOverlaySettings(overlay) {
+    if (!overlay || !overlay.type) return;
+    state.thumbnail.overlayMode = overlay.type;
+    const radio = document.querySelector(`input[name="thumb-overlay-mode"][value="${overlay.type}"]`);
+    if (radio) radio.checked = true;
+
+    if (overlay.type === 'image') {
+        state.thumbnail.overlayImage.path = overlay.path || null;
+        state.thumbnail.overlayImage.mode = overlay.mode || 'scale_to_canvas';
+        state.thumbnail.overlayImage.opacity = overlay.opacity || 1;
+        document.getElementById('thumb-overlay-mode').value = state.thumbnail.overlayImage.mode;
+        document.getElementById('thumb-overlay-opacity').value = Math.round(state.thumbnail.overlayImage.opacity * 100);
+        if (state.thumbnail.overlayImage.path) {
+            const fileName = PathBasename(state.thumbnail.overlayImage.path);
+            const content = document.getElementById('thumb-overlay-asset');
+            const settings = document.getElementById('thumb-overlay-settings');
+            content.innerHTML = `
+                <div class="asset-uploaded">
+                    <span class="asset-filename" title="${state.thumbnail.overlayImage.path}">${fileName}</span>
+                    <button type="button" class="asset-remove" onclick="removeThumbnailOverlayImage()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            `;
+            settings.style.display = 'flex';
+        }
+    } else if (overlay.type === 'studio') {
+        state.thumbnail.studio.canvasWidth = overlay.studio?.width || state.thumbnail.studio.canvasWidth;
+        state.thumbnail.studio.canvasHeight = overlay.studio?.height || state.thumbnail.studio.canvasHeight;
+        state.thumbnail.studio.elements = (overlay.studio?.elements || []).map(el => ({ ...el }));
+        document.getElementById('thumb-width').value = state.thumbnail.studio.canvasWidth;
+        document.getElementById('thumb-height').value = state.thumbnail.studio.canvasHeight;
+        updateStudioCanvasDimensions();
+        renderStudioElements();
+    }
+
+    toggleThumbnailOverlayMode();
+}
+
+function updateThumbnailPresetButtons() {
+    const hasPreset = !!state.thumbnail.selectedPresetId;
+    document.getElementById('thumb-update-preset').disabled = !hasPreset;
+    document.getElementById('thumb-delete-preset').disabled = !hasPreset;
+}
+
+function initThumbnailPresetModal() {
+    document.getElementById('thumb-preset-modal-close').addEventListener('click', closeThumbnailPresetModal);
+    document.getElementById('thumb-preset-modal-cancel').addEventListener('click', closeThumbnailPresetModal);
+    document.getElementById('thumb-preset-modal-save').addEventListener('click', saveThumbnailPreset);
+    document.querySelector('#thumb-preset-modal .modal-backdrop').addEventListener('click', closeThumbnailPresetModal);
+}
+
+function openThumbnailPresetModal() {
+    document.getElementById('thumb-preset-name').value = '';
+    document.getElementById('thumb-preset-modal').classList.add('open');
+}
+
+function closeThumbnailPresetModal() {
+    document.getElementById('thumb-preset-modal').classList.remove('open');
+}
+
+function buildThumbnailPresetSettings() {
+    const payload = buildThumbnailPayload();
+    const settings = { ...payload };
+    delete settings.backgrounds;
+
+    const numberElement = getNumberingElement();
+    if (settings.numbering?.enabled && numberElement) {
+        settings.numbering.element = {
+            width: numberElement.width,
+            height: numberElement.height
+        };
+    }
+    return settings;
+}
+
+async function saveThumbnailPreset() {
+    const name = document.getElementById('thumb-preset-name').value.trim();
+    if (!name) {
+        showToast('Enter a preset name', 'error');
+        return;
+    }
+    try {
+        const settings = buildThumbnailPresetSettings();
+        const preset = await API.post('/thumbnails/presets', { name, settings });
+        state.thumbnail.presets.push(preset);
+        renderThumbnailPresets();
+        document.getElementById('thumb-preset-select').value = preset.id;
+        state.thumbnail.selectedPresetId = preset.id;
+        updateThumbnailPresetButtons();
+        closeThumbnailPresetModal();
+        showToast('Thumbnail preset saved', 'success');
+    } catch (err) {
+        showToast(`Failed to save preset: ${err.message}`, 'error');
+    }
+}
+
+async function updateThumbnailPreset() {
+    if (!state.thumbnail.selectedPresetId) return;
+    try {
+        const settings = buildThumbnailPresetSettings();
+        const preset = await API.put(`/thumbnails/presets/${state.thumbnail.selectedPresetId}`, { settings });
+        const idx = state.thumbnail.presets.findIndex(p => p.id === preset.id);
+        if (idx >= 0) state.thumbnail.presets[idx] = preset;
+        renderThumbnailPresets();
+        document.getElementById('thumb-preset-select').value = preset.id;
+        showToast('Thumbnail preset updated', 'success');
+    } catch (err) {
+        showToast(`Failed to update preset: ${err.message}`, 'error');
+    }
+}
+
+async function deleteThumbnailPreset() {
+    if (!state.thumbnail.selectedPresetId) return;
+    if (!confirm('Delete this thumbnail preset?')) return;
+    try {
+        await API.delete(`/thumbnails/presets/${state.thumbnail.selectedPresetId}`);
+        state.thumbnail.presets = state.thumbnail.presets.filter(p => p.id !== state.thumbnail.selectedPresetId);
+        state.thumbnail.selectedPresetId = null;
+        renderThumbnailPresets();
+        document.getElementById('thumb-preset-select').value = '';
+        updateThumbnailPresetButtons();
+        showToast('Thumbnail preset deleted', 'success');
+    } catch (err) {
+        showToast(`Failed to delete preset: ${err.message}`, 'error');
+    }
+}
+
+function toggleThumbnailOverlayMode() {
+    const imagePanel = document.getElementById('thumb-overlay-image');
+    const studioCard = document.querySelector('.studio-card');
+    const mode = state.thumbnail.overlayMode;
+    const numberingEnabled = document.getElementById('thumb-numbering')?.checked;
+    const allowStudio = mode === 'studio' || numberingEnabled;
+
+    imagePanel.style.display = mode === 'image' ? 'block' : 'none';
+    studioCard.style.opacity = allowStudio ? '1' : '0.4';
+    studioCard.style.pointerEvents = allowStudio ? 'auto' : 'none';
+}
+
+async function browseThumbnailOverlayImage() {
+    try {
+        const result = await API.post('/browse/images', {});
+        if (result.cancelled) return;
+        if (!result.paths?.length) return;
+
+        const filePath = result.paths[0];
+        const fileName = PathBasename(filePath);
+        state.thumbnail.overlayImage.path = filePath;
+
+        const content = document.getElementById('thumb-overlay-asset');
+        const settings = document.getElementById('thumb-overlay-settings');
+        content.innerHTML = `
+            <div class="asset-uploaded">
+                <span class="asset-filename" title="${filePath}">${fileName}</span>
+                <button type="button" class="asset-remove" onclick="removeThumbnailOverlayImage()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+        `;
+        settings.style.display = 'flex';
+    } catch (err) {
+        showToast(`Failed to browse overlay: ${err.message}`, 'error');
+    }
+}
+
+function removeThumbnailOverlayImage() {
+    state.thumbnail.overlayImage.path = null;
+    const content = document.getElementById('thumb-overlay-asset');
+    const settings = document.getElementById('thumb-overlay-settings');
+    content.innerHTML = `
+        <div class="asset-empty">
+            <button type="button" class="btn btn-outline btn-sm" id="thumb-browse-overlay">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+                Browse Overlay Image
+            </button>
+        </div>
+    `;
+    settings.style.display = 'none';
+    document.getElementById('thumb-browse-overlay').addEventListener('click', browseThumbnailOverlayImage);
+}
+
+async function loadThumbnailFonts() {
+    try {
+        const fonts = await API.get('/thumbnails/fonts');
+        state.thumbnail.fonts = fonts || [];
+        populateFontSelects();
+    } catch (err) {
+        showToast('Failed to load fonts', 'error');
+    }
+}
+
+function populateFontSelects() {
+    initFontPicker('studio-font', 'Default');
+    initFontPicker('thumb-number-font', 'Auto');
+}
+
+function initFontPicker(targetId, defaultLabel) {
+    const listEl = document.getElementById(`${targetId}-list`);
+    const searchEl = document.getElementById(`${targetId}-search`);
+    const selectedEl = document.getElementById(`${targetId}-selected`);
+    const hiddenInput = document.getElementById(targetId);
+    if (!listEl || !searchEl || !selectedEl || !hiddenInput) return;
+
+    const initialized = listEl.dataset.initialized === 'true';
+
+    const allFonts = [{ name: defaultLabel, path: '' }, ...state.thumbnail.fonts];
+    let filtered = allFonts;
+    let offset = 0;
+    const pageSize = 40;
+
+    const renderNext = () => {
+        const slice = filtered.slice(offset, offset + pageSize);
+        slice.forEach(font => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = `font-item ${hiddenInput.value === font.path ? 'active' : ''}`;
+            item.dataset.fontPath = font.path;
+            item.innerHTML = `
+                <span class="font-name">${font.name}</span>
+                <span class="font-preview" style="font-family: '${font.name}', Inter, sans-serif;">AaBb 012345</span>
+            `;
+            item.addEventListener('click', () => {
+                hiddenInput.value = font.path;
+                selectedEl.textContent = font.name || defaultLabel;
+                listEl.querySelectorAll('.font-item').forEach(btn => btn.classList.remove('active'));
+                item.classList.add('active');
+                if (targetId === 'thumb-number-font') {
+                    syncNumberingElementFromForm();
+                } else {
+                    updateStudioFromInputs();
+                }
+            });
+            listEl.appendChild(item);
+        });
+        offset += slice.length;
+    };
+
+    const resetList = () => {
+        listEl.innerHTML = '';
+        offset = 0;
+        renderNext();
+    };
+
+    if (!initialized) {
+        searchEl.addEventListener('input', () => {
+            const term = searchEl.value.trim().toLowerCase();
+            filtered = term
+                ? allFonts.filter(font => font.name.toLowerCase().includes(term))
+                : allFonts;
+            resetList();
+        });
+
+        listEl.addEventListener('scroll', () => {
+            if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 20) {
+                renderNext();
+            }
+        });
+        listEl.dataset.initialized = 'true';
+    }
+
+    selectedEl.textContent = getFontNameByPath(hiddenInput.value) || defaultLabel;
+    resetList();
+}
+
+function getFontNameByPath(path) {
+    if (!path) return '';
+    const match = state.thumbnail.fonts.find(f => f.path === path);
+    return match?.name || '';
+}
+
+function setFontPickerSelection(targetId, fontPath, defaultLabel) {
+    const hiddenInput = document.getElementById(targetId);
+    const selectedEl = document.getElementById(`${targetId}-selected`);
+    if (!hiddenInput || !selectedEl) return;
+    hiddenInput.value = fontPath || '';
+    selectedEl.textContent = getFontNameByPath(fontPath) || defaultLabel;
+}
+
+
+function initThumbnailOutputSettings() {
+    document.getElementById('thumb-output-dir-browse').addEventListener('click', async () => {
+        try {
+            const result = await API.post('/browse/folder', {});
+            if (!result.cancelled && result.path) {
+                document.getElementById('thumb-output-dir').value = result.path;
+            }
+        } catch (err) {
+            showToast('Failed to browse folder', 'error');
+        }
+    });
+
+    document.getElementById('thumb-numbering').addEventListener('change', (e) => {
+        document.getElementById('thumb-numbering-settings').style.display = e.target.checked ? 'block' : 'none';
+        toggleNumberingElement(e.target.checked);
+    });
+
+    document.getElementById('thumb-bg-color-picker').addEventListener('input', (e) => {
+        document.getElementById('thumb-bg-color').value = e.target.value;
+    });
+    document.getElementById('thumb-bg-color').addEventListener('input', (e) => {
+        if (isValidHexColor(e.target.value)) {
+            document.getElementById('thumb-bg-color-picker').value = e.target.value;
+        }
+    });
+
+    document.getElementById('thumb-number-fill-picker').addEventListener('input', (e) => {
+        document.getElementById('thumb-number-fill').value = e.target.value;
+        syncNumberingElementFromForm();
+    });
+    document.getElementById('thumb-number-stroke-picker').addEventListener('input', (e) => {
+        document.getElementById('thumb-number-stroke').value = e.target.value;
+        syncNumberingElementFromForm();
+    });
+    document.getElementById('thumb-number-fill').addEventListener('input', (e) => {
+        if (isValidHexColor(e.target.value)) {
+            document.getElementById('thumb-number-fill-picker').value = e.target.value;
+        }
+        syncNumberingElementFromForm();
+    });
+    document.getElementById('thumb-number-stroke').addEventListener('input', (e) => {
+        if (isValidHexColor(e.target.value)) {
+            document.getElementById('thumb-number-stroke-picker').value = e.target.value;
+        }
+        syncNumberingElementFromForm();
+    });
+    document.getElementById('thumb-number-fill-enabled').addEventListener('change', syncNumberingElementFromForm);
+    document.getElementById('thumb-number-stroke-enabled').addEventListener('change', syncNumberingElementFromForm);
+    ['thumb-number-size', 'thumb-number-stroke-width', 'thumb-number-line-height', 'thumb-number-letter-spacing', 'thumb-number-font'].forEach(id => {
+        document.getElementById(id).addEventListener('input', syncNumberingElementFromForm);
+    });
+
+    document.getElementById('thumb-number-position').addEventListener('change', (e) => {
+        applyNumberingPositionPreset(e.target.value);
+    });
+
+    document.getElementById('thumb-optimize').addEventListener('change', (e) => {
+        document.getElementById('thumb-max-bytes-group').style.display = e.target.checked ? 'block' : 'none';
+    });
+
+    document.getElementById('thumb-max-bytes-group').style.display =
+        document.getElementById('thumb-optimize').checked ? 'block' : 'none';
+    document.getElementById('thumb-numbering-settings').style.display =
+        document.getElementById('thumb-numbering').checked ? 'block' : 'none';
+    toggleNumberingElement(document.getElementById('thumb-numbering').checked);
+
+    ['thumb-width', 'thumb-height'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateStudioCanvasDimensions);
+    });
+}
+
+function initStudioBuilder() {
+    document.getElementById('studio-add-text').addEventListener('click', addStudioTextElement);
+    document.getElementById('studio-add-image').addEventListener('click', addStudioImageElement);
+    document.getElementById('studio-delete').addEventListener('click', deleteSelectedStudioElement);
+    document.getElementById('studio-duplicate').addEventListener('click', duplicateSelectedStudioElement);
+
+    document.querySelectorAll('.studio-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => setStudioMode(btn.dataset.mode));
+    });
+
+    ['studio-text', 'studio-font', 'studio-font-size', 'studio-text-fill', 'studio-text-stroke', 'studio-text-stroke-width', 'studio-text-align', 'studio-line-height', 'studio-letter-spacing', 'studio-text-opacity'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateStudioFromInputs);
+    });
+
+    document.getElementById('studio-text-fill-picker').addEventListener('input', (e) => {
+        document.getElementById('studio-text-fill').value = e.target.value;
+        updateStudioFromInputs();
+    });
+    document.getElementById('studio-text-stroke-picker').addEventListener('input', (e) => {
+        document.getElementById('studio-text-stroke').value = e.target.value;
+        updateStudioFromInputs();
+    });
+    document.getElementById('studio-fill-enabled').addEventListener('change', updateStudioFromInputs);
+    document.getElementById('studio-stroke-enabled').addEventListener('change', updateStudioFromInputs);
+    document.getElementById('studio-text-fill').addEventListener('input', (e) => {
+        if (isValidHexColor(e.target.value)) {
+            document.getElementById('studio-text-fill-picker').value = e.target.value;
+        }
+    });
+    document.getElementById('studio-text-stroke').addEventListener('input', (e) => {
+        if (isValidHexColor(e.target.value)) {
+            document.getElementById('studio-text-stroke-picker').value = e.target.value;
+        }
+    });
+
+    ['studio-image-opacity', 'studio-image-aspect'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateStudioFromInputs);
+    });
+
+    ['studio-x', 'studio-y', 'studio-width', 'studio-height'].forEach(id => {
+        document.getElementById(id).addEventListener('input', updateStudioFromInputs);
+    });
+
+    window.addEventListener('resize', updateStudioCanvasDimensions);
+    updateStudioCanvasDimensions();
+    renderStudioElements();
+}
+
+function setStudioMode(mode) {
+    state.thumbnail.studio.transformMode = mode || 'resize';
+    document.querySelectorAll('.studio-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === state.thumbnail.studio.transformMode);
+    });
+    renderStudioElements();
+}
+
+function updateStudioCanvasDimensions() {
+    const width = parseInt(document.getElementById('thumb-width').value) || 1280;
+    const height = parseInt(document.getElementById('thumb-height').value) || 720;
+    state.thumbnail.studio.canvasWidth = width;
+    state.thumbnail.studio.canvasHeight = height;
+
+    const wrap = document.getElementById('studio-canvas-wrap');
+    wrap.style.setProperty('--canvas-aspect', `${width} / ${height}`);
+    renderStudioElements();
+}
+
+function getStudioScale() {
+    const wrap = document.getElementById('studio-canvas-wrap');
+    const width = state.thumbnail.studio.canvasWidth;
+    const wrapWidth = wrap.clientWidth || width;
+    return wrapWidth / width;
+}
+
+function renderStudioElements() {
+    const canvas = document.getElementById('studio-canvas');
+    if (!canvas) return;
+    if (state.thumbnail.studio.editingId) return;
+    const scale = getStudioScale();
+    canvas.innerHTML = '';
+
+    state.thumbnail.studio.elements.forEach(element => {
+        const el = document.createElement('div');
+        el.className = `studio-element ${element.type} ${element.id === state.thumbnail.studio.selectedId ? 'selected' : ''}`;
+        el.dataset.id = element.id;
+
+        el.style.left = `${element.x * scale}px`;
+        el.style.top = `${element.y * scale}px`;
+        el.style.width = `${element.width * scale}px`;
+        el.style.height = `${element.height * scale}px`;
+        el.style.opacity = element.opacity ?? 1;
+
+        if (element.type === 'text' || element.type === 'numbering') {
+            const text = document.createElement('div');
+            text.className = 'studio-text';
+            text.textContent = element.text || '';
+            text.style.fontSize = `${(element.fontSize || 48) * scale}px`;
+            text.style.fontFamily = element.fontFamily || 'Inter';
+            const fillEnabled = element.fillEnabled !== false;
+            const strokeEnabled = element.strokeEnabled !== false;
+            text.style.color = fillEnabled ? (element.fill || '#ffffff') : 'transparent';
+            text.style.textAlign = element.align || 'left';
+            text.style.lineHeight = element.lineHeight || 1.1;
+            text.style.letterSpacing = `${(element.letterSpacing || 0) * scale}px`;
+            const stroke = element.stroke || '#000000';
+            const strokeWidth = strokeEnabled ? (element.strokeWidth || 0) * scale : 0;
+            text.style.webkitTextStroke = strokeWidth > 0 ? `${strokeWidth}px ${stroke}` : '0px transparent';
+            el.appendChild(text);
+            if (element.type === 'text') {
+                el.addEventListener('dblclick', () => openStudioTextEditor(element.id));
+            }
+        } else if (element.type === 'image') {
+            const img = document.createElement('img');
+            img.src = getThumbnailPreviewUrl(element.path);
+            img.alt = 'Overlay';
+            el.appendChild(img);
+        }
+
+        ['tl', 'tr', 'bl', 'br'].forEach(handle => {
+            const h = document.createElement('div');
+            h.className = `studio-handle ${handle}`;
+            h.dataset.handle = handle;
+            el.appendChild(h);
+        });
+
+        el.addEventListener('pointerdown', handleStudioPointerDown);
+        canvas.appendChild(el);
+    });
+
+    updateStudioPropertiesPanel();
+}
+
+function openStudioTextEditor(id) {
+    if (state.thumbnail.studio.editingId) return;
+    const element = state.thumbnail.studio.elements.find(el => el.id === id);
+    if (!element || element.type !== 'text') return;
+
+    const canvas = document.getElementById('studio-canvas');
+    const scale = getStudioScale();
+    const editor = document.createElement('textarea');
+    editor.className = 'studio-text-editor';
+    editor.value = element.text || '';
+    editor.style.left = `${element.x * scale}px`;
+    editor.style.top = `${element.y * scale}px`;
+    editor.style.width = `${element.width * scale}px`;
+    editor.style.height = `${element.height * scale}px`;
+    editor.style.fontSize = `${(element.fontSize || 48) * scale}px`;
+    editor.style.fontFamily = element.fontFamily || 'Inter';
+    const fillEnabled = element.fillEnabled !== false;
+    editor.style.color = fillEnabled ? (element.fill || '#ffffff') : (element.stroke || '#ffffff');
+    editor.style.lineHeight = element.lineHeight || 1.1;
+    editor.style.letterSpacing = `${(element.letterSpacing || 0) * scale}px`;
+    canvas.appendChild(editor);
+    editor.focus();
+
+    state.thumbnail.studio.editingId = id;
+    studioTextEditor = editor;
+
+    editor.addEventListener('blur', () => closeStudioTextEditor(true));
+    editor.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeStudioTextEditor(false);
+        }
+    });
+}
+
+function closeStudioTextEditor(commit) {
+    const editor = studioTextEditor;
+    if (!editor) return;
+    const id = state.thumbnail.studio.editingId;
+    const element = state.thumbnail.studio.elements.find(el => el.id === id);
+    if (commit && element) {
+        element.text = editor.value;
+    }
+    editor.remove();
+    studioTextEditor = null;
+    state.thumbnail.studio.editingId = null;
+    renderStudioElements();
+}
+
+function handleStudioPointerDown(e) {
+    e.preventDefault();
+    if (state.thumbnail.studio.editingId) {
+        closeStudioTextEditor(true);
+    }
+    const target = e.currentTarget;
+    const id = target.dataset.id;
+    selectStudioElement(id);
+
+    const handle = e.target.dataset?.handle;
+    const transformMode = state.thumbnail.studio.transformMode || 'resize';
+    const scale = getStudioScale();
+    const element = getSelectedStudioElement();
+    if (!element) return;
+
+    studioDragState = {
+        id,
+        mode: handle ? transformMode : 'move',
+        handle: handle || null,
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: element.x,
+        origY: element.y,
+        origW: element.width,
+        origH: element.height,
+        origFontSize: element.type === 'text' || element.type === 'numbering' ? (element.fontSize || 48) : null,
+        scale
+    };
+
+    window.addEventListener('pointermove', handleStudioPointerMove);
+    window.addEventListener('pointerup', handleStudioPointerUp, { once: true });
+}
+
+function handleStudioPointerMove(e) {
+    if (!studioDragState) return;
+    const element = getSelectedStudioElement();
+    if (!element) return;
+
+    const dx = (e.clientX - studioDragState.startX) / studioDragState.scale;
+    const dy = (e.clientY - studioDragState.startY) / studioDragState.scale;
+    const canvasW = state.thumbnail.studio.canvasWidth;
+    const canvasH = state.thumbnail.studio.canvasHeight;
+
+    if (studioDragState.mode === 'move') {
+        element.x = Math.max(0, Math.min(canvasW - element.width, studioDragState.origX + dx));
+        element.y = Math.max(0, Math.min(canvasH - element.height, studioDragState.origY + dy));
+        if (element.type === 'numbering') {
+            document.getElementById('thumb-number-position').value = 'custom';
+        }
+    } else {
+        const handle = studioDragState.handle;
+        let newW = studioDragState.origW;
+        let newH = studioDragState.origH;
+        let newX = studioDragState.origX;
+        let newY = studioDragState.origY;
+        const aspect = studioDragState.origW / studioDragState.origH;
+
+        if (handle.includes('r')) {
+            newW = Math.max(20, studioDragState.origW + dx);
+        }
+        if (handle.includes('l')) {
+            newW = Math.max(20, studioDragState.origW - dx);
+            newX = studioDragState.origX + dx;
+        }
+        if (handle.includes('b')) {
+            newH = Math.max(20, studioDragState.origH + dy);
+        }
+        if (handle.includes('t')) {
+            newH = Math.max(20, studioDragState.origH - dy);
+            newY = studioDragState.origY + dy;
+        }
+
+        if (element.type === 'image' && element.preserveAspect) {
+            if (newW / newH > aspect) {
+                newW = newH * aspect;
+            } else {
+                newH = newW / aspect;
+            }
+        }
+
+        if ((element.type === 'text' || element.type === 'numbering') && studioDragState.origFontSize) {
+            if (studioDragState.mode === 'scale') {
+                const scaleFactor = Math.max(newW / studioDragState.origW, newH / studioDragState.origH);
+                element.fontSize = Math.max(8, Math.round(studioDragState.origFontSize * scaleFactor));
+            }
+        }
+
+
+        element.width = Math.min(canvasW, Math.max(20, newW));
+        element.height = Math.min(canvasH, Math.max(20, newH));
+        element.x = Math.max(0, Math.min(canvasW - element.width, newX));
+        element.y = Math.max(0, Math.min(canvasH - element.height, newY));
+        if (element.type === 'numbering') {
+            document.getElementById('thumb-number-position').value = 'custom';
+        }
+    }
+
+    renderStudioElements();
+}
+
+function handleStudioPointerUp() {
+    studioDragState = null;
+    window.removeEventListener('pointermove', handleStudioPointerMove);
+}
+
+function addStudioTextElement() {
+    const element = {
+        id: `text-${Date.now()}`,
+        type: 'text',
+        text: 'New Text',
+        x: 80,
+        y: 80,
+        width: 420,
+        height: 140,
+        fontFamily: 'Inter',
+        fontPath: '',
+        fontSize: 64,
+        fill: '#ffffff',
+        fillEnabled: true,
+        stroke: '#000000',
+        strokeWidth: 8,
+        strokeEnabled: false,
+        align: 'left',
+        opacity: 1,
+        lineHeight: 1.1,
+        letterSpacing: 0
+    };
+    state.thumbnail.studio.elements.push(element);
+    selectStudioElement(element.id);
+    renderStudioElements();
+}
+
+async function addStudioImageElement() {
+    try {
+        const result = await API.post('/browse/images', {});
+        if (result.cancelled || !result.paths?.length) return;
+        const path = result.paths[0];
+        const element = {
+            id: `img-${Date.now()}`,
+            type: 'image',
+            path,
+            x: 100,
+            y: 100,
+            width: 220,
+            height: 220,
+            opacity: 1,
+            preserveAspect: true
+        };
+        state.thumbnail.studio.elements.push(element);
+        selectStudioElement(element.id);
+        renderStudioElements();
+    } catch (err) {
+        showToast(`Failed to add image: ${err.message}`, 'error');
+    }
+}
+
+function selectStudioElement(id) {
+    state.thumbnail.studio.selectedId = id;
+    renderStudioElements();
+}
+
+function getSelectedStudioElement() {
+    return state.thumbnail.studio.elements.find(el => el.id === state.thumbnail.studio.selectedId);
+}
+
+function updateStudioPropertiesPanel() {
+    const element = getSelectedStudioElement();
+    const placeholder = document.querySelector('.studio-placeholder');
+    const textSection = document.getElementById('studio-text-section');
+    const imageSection = document.getElementById('studio-image-section');
+    const geometrySection = document.getElementById('studio-geometry-section');
+
+    if (!element) {
+        placeholder.style.display = 'block';
+        textSection.style.display = 'none';
+        imageSection.style.display = 'none';
+        geometrySection.style.display = 'none';
+        return;
+    }
+
+    placeholder.style.display = 'none';
+    geometrySection.style.display = 'block';
+    if (element.type === 'text' || element.type === 'numbering') {
+        textSection.style.display = 'block';
+        imageSection.style.display = 'none';
+        const isNumbering = element.type === 'numbering';
+        const textInput = document.getElementById('studio-text');
+        textInput.value = isNumbering ? '01 (auto)' : (element.text || '');
+        textInput.disabled = isNumbering;
+        setFontPickerSelection('studio-font', element.fontPath, 'Default');
+        document.getElementById('studio-font-size').value = element.fontSize || 64;
+        document.getElementById('studio-text-fill').value = element.fill || '#ffffff';
+        document.getElementById('studio-text-fill-picker').value = element.fill || '#ffffff';
+        document.getElementById('studio-text-stroke').value = element.stroke || '#000000';
+        document.getElementById('studio-text-stroke-picker').value = element.stroke || '#000000';
+        const fillEnabled = element.fillEnabled !== false;
+        const strokeEnabled = element.strokeEnabled !== false;
+        document.getElementById('studio-fill-enabled').checked = fillEnabled;
+        document.getElementById('studio-stroke-enabled').checked = strokeEnabled;
+        document.getElementById('studio-text-fill').disabled = !fillEnabled;
+        document.getElementById('studio-text-fill-picker').disabled = !fillEnabled;
+        document.getElementById('studio-text-stroke').disabled = !strokeEnabled;
+        document.getElementById('studio-text-stroke-picker').disabled = !strokeEnabled;
+        document.getElementById('studio-text-stroke-width').value = element.strokeWidth || 0;
+        document.getElementById('studio-text-align').value = element.align || 'left';
+        document.getElementById('studio-line-height').value = element.lineHeight ?? 1.1;
+        document.getElementById('studio-letter-spacing').value = element.letterSpacing ?? 0;
+        document.getElementById('studio-text-opacity').value = Math.round((element.opacity ?? 1) * 100);
+        if (isNumbering) {
+            document.getElementById('thumb-number-fill').value = element.fill || '#ffffff';
+            document.getElementById('thumb-number-fill-picker').value = element.fill || '#ffffff';
+            document.getElementById('thumb-number-stroke').value = element.stroke || '#000000';
+            document.getElementById('thumb-number-stroke-picker').value = element.stroke || '#000000';
+            document.getElementById('thumb-number-size').value = element.fontSize || 64;
+            document.getElementById('thumb-number-line-height').value = element.lineHeight ?? 1.1;
+            document.getElementById('thumb-number-letter-spacing').value = element.letterSpacing ?? 0;
+            document.getElementById('thumb-number-stroke-width').value = element.strokeWidth || 0;
+            document.getElementById('thumb-number-fill-enabled').checked = element.fillEnabled !== false;
+            document.getElementById('thumb-number-stroke-enabled').checked = element.strokeEnabled !== false;
+            setFontPickerSelection('thumb-number-font', element.fontPath, 'Auto');
+        }
+    } else {
+        textSection.style.display = 'none';
+        imageSection.style.display = 'block';
+        document.getElementById('studio-image-opacity').value = Math.round((element.opacity ?? 1) * 100);
+        document.getElementById('studio-image-aspect').checked = element.preserveAspect !== false;
+    }
+
+    document.getElementById('studio-x').value = Math.round(element.x);
+    document.getElementById('studio-y').value = Math.round(element.y);
+    document.getElementById('studio-width').value = Math.round(element.width);
+    document.getElementById('studio-height').value = Math.round(element.height);
+}
+
+function updateStudioFromInputs() {
+    const element = getSelectedStudioElement();
+    if (!element) return;
+
+    element.x = parseFloat(document.getElementById('studio-x').value) || element.x;
+    element.y = parseFloat(document.getElementById('studio-y').value) || element.y;
+    element.width = Math.max(20, parseFloat(document.getElementById('studio-width').value) || element.width);
+    element.height = Math.max(20, parseFloat(document.getElementById('studio-height').value) || element.height);
+
+    if (element.type === 'text' || element.type === 'numbering') {
+        if (element.type === 'text') {
+            element.text = document.getElementById('studio-text').value;
+        } else {
+            element.text = '01';
+        }
+        const fontPath = document.getElementById('studio-font').value;
+        element.fontPath = fontPath;
+        element.fontFamily = getFontNameByPath(fontPath) || 'Inter';
+        element.fontSize = parseInt(document.getElementById('studio-font-size').value) || element.fontSize;
+        element.lineHeight = parseFloat(document.getElementById('studio-line-height').value) || element.lineHeight || 1.1;
+        element.letterSpacing = parseFloat(document.getElementById('studio-letter-spacing').value) || element.letterSpacing || 0;
+        element.fill = document.getElementById('studio-text-fill').value || element.fill;
+        element.fillEnabled = document.getElementById('studio-fill-enabled').checked;
+        element.stroke = document.getElementById('studio-text-stroke').value || element.stroke;
+        element.strokeWidth = parseInt(document.getElementById('studio-text-stroke-width').value) || 0;
+        element.strokeEnabled = document.getElementById('studio-stroke-enabled').checked;
+        element.align = document.getElementById('studio-text-align').value || 'left';
+        element.opacity = (parseInt(document.getElementById('studio-text-opacity').value) || 100) / 100;
+
+        if (element.type === 'numbering') {
+            document.getElementById('thumb-number-fill').value = element.fill;
+            document.getElementById('thumb-number-fill-picker').value = element.fill;
+            document.getElementById('thumb-number-stroke').value = element.stroke;
+            document.getElementById('thumb-number-stroke-picker').value = element.stroke;
+            document.getElementById('thumb-number-size').value = element.fontSize;
+            document.getElementById('thumb-number-stroke-width').value = element.strokeWidth;
+            document.getElementById('thumb-number-fill-enabled').checked = element.fillEnabled !== false;
+            document.getElementById('thumb-number-stroke-enabled').checked = element.strokeEnabled !== false;
+            setFontPickerSelection('thumb-number-font', element.fontPath, 'Auto');
+        }
+    } else {
+        element.opacity = (parseInt(document.getElementById('studio-image-opacity').value) || 100) / 100;
+        element.preserveAspect = document.getElementById('studio-image-aspect').checked;
+    }
+
+    renderStudioElements();
+}
+
+function deleteSelectedStudioElement() {
+    if (!state.thumbnail.studio.selectedId) return;
+    state.thumbnail.studio.elements = state.thumbnail.studio.elements.filter(el => el.id !== state.thumbnail.studio.selectedId);
+    state.thumbnail.studio.selectedId = null;
+    renderStudioElements();
+}
+
+function duplicateSelectedStudioElement() {
+    const element = getSelectedStudioElement();
+    if (!element) return;
+    const copy = { ...element, id: `${element.type}-${Date.now()}`, x: element.x + 20, y: element.y + 20 };
+    state.thumbnail.studio.elements.push(copy);
+    selectStudioElement(copy.id);
+    renderStudioElements();
+}
+
+function initThumbnailGeneration() {
+    document.getElementById('thumb-generate-btn').addEventListener('click', startThumbnailGeneration);
+    document.getElementById('thumb-cancel-btn').addEventListener('click', cancelThumbnailGeneration);
+}
+
+function buildThumbnailPayload() {
+    const resize = {
+        width: parseInt(document.getElementById('thumb-width').value) || 1280,
+        height: parseInt(document.getElementById('thumb-height').value) || 720,
+        fit_mode: document.getElementById('thumb-fit-mode').value,
+        background: document.getElementById('thumb-bg-color').value || '#000000'
+    };
+
+    const overlay = { type: state.thumbnail.overlayMode };
+    if (state.thumbnail.overlayMode === 'image') {
+        overlay.path = state.thumbnail.overlayImage.path;
+        overlay.mode = document.getElementById('thumb-overlay-mode').value;
+        overlay.opacity = (parseInt(document.getElementById('thumb-overlay-opacity').value) || 100) / 100;
+    } else if (state.thumbnail.overlayMode === 'studio') {
+        const studioElements = state.thumbnail.studio.elements.filter(el => el.type !== 'numbering');
+        overlay.studio = {
+            width: state.thumbnail.studio.canvasWidth,
+            height: state.thumbnail.studio.canvasHeight,
+            elements: studioElements
+        };
+    }
+
+    const numberingEnabled = document.getElementById('thumb-numbering').checked;
+    const numbering = {
+        enabled: numberingEnabled,
+        start: parseInt(document.getElementById('thumb-number-start').value) || 1,
+        position: document.getElementById('thumb-number-position').value,
+        margin: parseInt(document.getElementById('thumb-number-margin').value) || 24,
+        font_size: parseInt(document.getElementById('thumb-number-size').value) || 0,
+        line_height: parseFloat(document.getElementById('thumb-number-line-height').value) || 1.1,
+        letter_spacing: parseFloat(document.getElementById('thumb-number-letter-spacing').value) || 0,
+        fill: document.getElementById('thumb-number-fill').value || '#ffffff',
+        fill_enabled: document.getElementById('thumb-number-fill-enabled').checked,
+        stroke_fill: document.getElementById('thumb-number-stroke').value || '#000000',
+        stroke_width: parseInt(document.getElementById('thumb-number-stroke-width').value) || 4,
+        stroke_enabled: document.getElementById('thumb-number-stroke-enabled').checked,
+        font_path: document.getElementById('thumb-number-font').value || null
+    };
+
+    const numberElement = numberingEnabled ? getNumberingElement() : null;
+    if (numberElement) {
+        numbering.position = 'custom';
+        numbering.x = Math.round(numberElement.x);
+        numbering.y = Math.round(numberElement.y);
+        numbering.font_size = numberElement.fontSize || numbering.font_size;
+        numbering.line_height = numberElement.lineHeight || numbering.line_height;
+        numbering.letter_spacing = numberElement.letterSpacing || numbering.letter_spacing;
+        numbering.fill = numberElement.fill || numbering.fill;
+        numbering.fill_enabled = numberElement.fillEnabled !== false;
+        numbering.stroke_fill = numberElement.stroke || numbering.stroke_fill;
+        numbering.stroke_width = numberElement.strokeWidth || numbering.stroke_width;
+        numbering.stroke_enabled = numberElement.strokeEnabled !== false;
+        numbering.font_path = numberElement.fontPath || numbering.font_path;
+    }
+
+    const optimizeEnabled = document.getElementById('thumb-optimize').checked;
+    const optimize = {
+        enabled: optimizeEnabled,
+        max_bytes: parseInt(document.getElementById('thumb-max-bytes').value) || 2097152,
+        allow_format_change_to_jpeg: true
+    };
+
+    return {
+        backgrounds: state.thumbnail.backgrounds,
+        output_dir: document.getElementById('thumb-output-dir').value.trim(),
+        output_format: document.getElementById('thumb-output-format').value,
+        resize,
+        overlay,
+        numbering,
+        optimize,
+        strip_metadata: document.getElementById('thumb-strip-metadata').checked,
+        filename_suffix: document.getElementById('thumb-filename-suffix').value || '_thumb',
+        background_for_flatten: document.getElementById('thumb-bg-color').value || '#000000'
+    };
+}
+
+async function startThumbnailGeneration() {
+    if (!state.thumbnail.backgrounds.length) {
+        showToast('Add at least one background', 'warning');
+        return;
+    }
+    if (state.thumbnail.overlayMode === 'image' && !state.thumbnail.overlayImage.path) {
+        showToast('Select an overlay image', 'warning');
+        return;
+    }
+    if (state.thumbnail.overlayMode === 'studio' && state.thumbnail.studio.elements.length === 0) {
+        showToast('Add at least one studio element', 'warning');
+        return;
+    }
+
+    try {
+        const payload = buildThumbnailPayload();
+        const result = await API.post('/thumbnails/generate', payload);
+        state.thumbnail.jobId = result.job_id;
+        showThumbnailProgressOverlay(true);
+        pollThumbnailJobStatus();
+    } catch (err) {
+        showToast(`Failed to start job: ${err.message}`, 'error');
+    }
+}
+
+async function pollThumbnailJobStatus() {
+    if (!state.thumbnail.jobId) return;
+    try {
+        const status = await API.get(`/thumbnails/jobs/${state.thumbnail.jobId}`);
+        updateThumbnailProgress(status);
+
+        if (status.status === 'processing') {
+            setTimeout(pollThumbnailJobStatus, 500);
+        } else if (status.status === 'completed') {
+            showThumbnailProgressOverlay(false);
+            showToast('Thumbnails generated!', 'success');
+            state.thumbnail.jobId = null;
+        } else if (status.status === 'failed') {
+            showThumbnailProgressOverlay(false);
+            showToast(`Failed: ${status.error}`, 'error');
+            state.thumbnail.jobId = null;
+        } else if (status.status === 'cancelled') {
+            showThumbnailProgressOverlay(false);
+            showToast('Thumbnail job cancelled', 'warning');
+            state.thumbnail.jobId = null;
+        }
+    } catch (err) {
+        setTimeout(pollThumbnailJobStatus, 1000);
+    }
+}
+
+function updateThumbnailProgress(status) {
+    document.getElementById('thumb-progress-step').textContent = status.current_step || 'Working...';
+    document.getElementById('thumb-progress-bar').style.width = `${status.progress}%`;
+    document.getElementById('thumb-progress-percent').textContent = `${Math.round(status.progress)}%`;
+}
+
+function showThumbnailProgressOverlay(show) {
+    const overlay = document.getElementById('thumb-progress-overlay');
+    overlay.style.display = show ? 'flex' : 'none';
+    if (show) {
+        document.getElementById('thumb-progress-bar').style.width = '0%';
+        document.getElementById('thumb-progress-percent').textContent = '0%';
+        document.getElementById('thumb-progress-step').textContent = 'Initializing...';
+    }
+}
+
+async function cancelThumbnailGeneration() {
+    if (!state.thumbnail.jobId) return;
+    try {
+        await API.post(`/thumbnails/jobs/${state.thumbnail.jobId}/cancel`, {});
+    } catch (err) {
+        showToast('Failed to cancel job', 'error');
+    }
+}
+
+function PathBasename(path) {
+    return (path || '').split(/[\\/]/).pop() || '';
+}
+
+function getThumbnailPreviewUrl(path) {
+    return `/api/thumbnails/file?path=${encodeURIComponent(path)}`;
+}
+
 // ============== Outputs ==============
 async function loadOutputs() {
     const list = document.getElementById('outputs-list');
@@ -1299,6 +2888,32 @@ function initOnboarding() {
     }
 }
 
+// ============== Decimal Stepper ==============
+function initDecimalSteppers() {
+    document.querySelectorAll('.decimal-stepper-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetId = btn.dataset.target;
+            const step = parseFloat(btn.dataset.step) || 0.1;
+            const direction = btn.dataset.direction;
+            const input = document.getElementById(targetId);
+            if (!input) return;
+            
+            let value = parseFloat(input.value) || 0;
+            if (direction === 'up') {
+                value += step;
+            } else {
+                value -= step;
+            }
+            // Round to avoid floating point issues
+            value = Math.round(value * 100) / 100;
+            input.value = value;
+            
+            // Trigger input event for any listeners
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+    });
+}
+
 // ============== Init ==============
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
@@ -1306,7 +2921,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initSettings();
     initProcessing();
     initBrandingModal();
+    initThumbnailStudio();
     initOutputs();
+    initDecimalSteppers();
     loadProfileSelect();
     
     // Show onboarding for first-time users
@@ -1318,3 +2935,9 @@ window.removeFile = removeFile;
 window.editBranding = editBranding;
 window.removeAsset = removeAsset;
 window.deleteOutput = deleteOutput;
+window.removeThumbnailImage = removeThumbnailImage;
+window.removeThumbnailVideo = removeThumbnailVideo;
+window.generateFramesForVideo = generateFramesForVideo;
+window.toggleThumbnailFrame = toggleThumbnailFrame;
+window.removeThumbnailBackgroundAction = removeThumbnailBackgroundAction;
+window.removeThumbnailOverlayImage = removeThumbnailOverlayImage;

@@ -4,21 +4,26 @@ Flask API for EditFlow application
 import os
 import threading
 import uuid
+import hashlib
+import subprocess
 import tkinter as tk
 import webbrowser
 from tkinter import filedialog
 from pathlib import Path
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 from core.config import (
     HOST, PORT, DEBUG, OUTPUT_PRESETS, TRANSITIONS,
-    PROFILES_DIR, TEMP_DIR, OUTPUT_DIR
+    PROFILES_DIR, TEMP_DIR, OUTPUT_DIR, FFMPEG_PATH,
+    THUMBNAIL_FRAMES_DIR
 )
 from core.profile_manager import profile_manager
 from core.video_processor import video_processor
 from core.render_preset_manager import render_preset_manager
+from core.thumbnail_processor import thumbnail_processor
+from core.thumbnail_settings_manager import thumbnail_settings_manager
 
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -26,12 +31,20 @@ CORS(app)
 
 # Store active processing threads
 processing_threads = {}
+thumbnail_threads = {}
 
 # Supported video extensions
 VIDEO_EXTENSIONS = [
     ('Video Files', '*.mp4 *.mkv *.avi *.mov *.webm *.wmv *.flv *.m4v *.ts *.mts'),
     ('All Files', '*.*')
 ]
+
+IMAGE_EXTENSIONS = [
+    ('Image Files', '*.jpg *.jpeg *.png *.webp'),
+    ('All Files', '*.*')
+]
+
+ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 
 
 def _normalize_output_name(name: str, default_ext: str = ".mp4") -> tuple[str, str]:
@@ -106,6 +119,66 @@ def _resolve_output_dir(output_dir: str | None, create: bool = True) -> Path:
             raise FileNotFoundError("Output folder not found")
 
     return candidate
+
+
+def _safe_image_path(raw_path: str) -> Path:
+    if not raw_path:
+        raise ValueError("Image path is required")
+    path = Path(raw_path).expanduser()
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"Image not found: {raw_path}")
+    if path.suffix.lower() not in ALLOWED_IMAGE_EXTS:
+        raise ValueError("Unsupported image format")
+    return path
+
+
+def _video_signature(video_path: str) -> str:
+    path = Path(video_path)
+    stat = path.stat()
+    signature = f"{path.resolve()}|{stat.st_mtime}|{stat.st_size}"
+    return hashlib.md5(signature.encode("utf-8")).hexdigest()[:12]
+
+
+def _extract_video_frames(video_path: str, frame_count: int = 12, scale_width: int = 320) -> list[dict]:
+    info = video_processor.get_video_info(video_path)
+    if not info or not info.duration:
+        raise ValueError("Unable to read video duration")
+
+    duration = float(info.duration)
+    frame_count = max(1, int(frame_count))
+    scale_width = max(120, int(scale_width))
+
+    signature = _video_signature(video_path)
+    frames_dir = THUMBNAIL_FRAMES_DIR / signature
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    for existing in frames_dir.glob("*.jpg"):
+        existing.unlink(missing_ok=True)
+
+    timestamps = [(duration * (i + 1) / (frame_count + 1)) for i in range(frame_count)]
+    frames: list[dict] = []
+
+    for idx, ts in enumerate(timestamps, start=1):
+        frame_path = frames_dir / f"frame_{idx:03d}_{int(ts * 1000)}.jpg"
+        cmd = [
+            FFMPEG_PATH,
+            "-hide_banner",
+            "-loglevel", "error",
+            "-ss", f"{ts:.3f}",
+            "-i", str(video_path),
+            "-frames:v", "1",
+            "-vf", f"scale={scale_width}:-1",
+            "-q:v", "2",
+            "-y",
+            str(frame_path)
+        ]
+        subprocess.run(cmd, check=True)
+        frames.append({
+            "path": str(frame_path),
+            "timestamp": ts,
+            "timestamp_formatted": format_duration(ts)
+        })
+
+    return frames
 
 
 # ============== Static Routes ==============
@@ -206,6 +279,34 @@ def browse_files_generic():
         if not file_paths:
             return jsonify({"paths": [], "cancelled": True})
         
+        return jsonify({"paths": list(file_paths), "cancelled": False})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/browse/images', methods=['POST'])
+def browse_images():
+    """Open native file dialog to select image files"""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        root.focus_force()
+
+        data = request.json or {}
+        initial_dir = data.get('initial_dir', os.path.expanduser('~'))
+
+        file_paths = filedialog.askopenfilenames(
+            title="Select Image Files",
+            initialdir=initial_dir,
+            filetypes=IMAGE_EXTENSIONS
+        )
+
+        root.destroy()
+
+        if not file_paths:
+            return jsonify({"paths": [], "cancelled": True})
+
         return jsonify({"paths": list(file_paths), "cancelled": False})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -484,6 +585,216 @@ def update_subscribe_settings(profile_id):
     if not profile:
         return jsonify({"error": "Profile not found or subscribe graphics not set"}), 404
     return jsonify(profile)
+
+
+# ============== Thumbnail Routes ==============
+
+@app.route('/api/thumbnails/presets', methods=['GET'])
+def get_thumbnail_presets():
+    """Get all thumbnail settings presets"""
+    presets = thumbnail_settings_manager.get_all_presets()
+    return jsonify(presets)
+
+
+@app.route('/api/thumbnails/presets', methods=['POST'])
+def create_thumbnail_preset():
+    """Create a new thumbnail settings preset"""
+    data = request.json
+    if not data or not data.get('name'):
+        return jsonify({"error": "Preset name is required"}), 400
+    preset = thumbnail_settings_manager.create_preset(data['name'], data.get('settings', {}))
+    return jsonify(preset)
+
+
+@app.route('/api/thumbnails/presets/<preset_id>', methods=['GET'])
+def get_thumbnail_preset(preset_id):
+    """Get a specific thumbnail settings preset"""
+    preset = thumbnail_settings_manager.get_preset(preset_id)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/thumbnails/presets/<preset_id>', methods=['PUT'])
+def update_thumbnail_preset(preset_id):
+    """Update a thumbnail settings preset"""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    preset = thumbnail_settings_manager.update_preset(preset_id, data)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/thumbnails/presets/<preset_id>', methods=['DELETE'])
+def delete_thumbnail_preset(preset_id):
+    """Delete a thumbnail settings preset"""
+    if thumbnail_settings_manager.delete_preset(preset_id):
+        return jsonify({"success": True})
+    return jsonify({"error": "Preset not found"}), 404
+
+
+@app.route('/api/thumbnails/fonts', methods=['GET'])
+def get_thumbnail_fonts():
+    """List available system fonts for studio overlays"""
+    fonts_dir = Path("C:/Windows/Fonts")
+    fonts = []
+    seen = set()
+    try:
+        import winreg
+        key_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+            index = 0
+            while True:
+                try:
+                    name, value, _ = winreg.EnumValue(key, index)
+                    index += 1
+                    font_name = name.split("(")[0].strip()
+                    if not font_name or font_name.lower() in seen:
+                        continue
+                    font_path = Path(value)
+                    if not font_path.is_absolute():
+                        font_path = fonts_dir / value
+                    if font_path.exists():
+                        seen.add(font_name.lower())
+                        fonts.append({
+                            "name": font_name,
+                            "path": str(font_path)
+                        })
+                except OSError:
+                    break
+    except Exception:
+        pass
+
+    if fonts_dir.exists():
+        for ext in ("*.ttf", "*.otf"):
+            for font_file in fonts_dir.glob(ext):
+                name = font_file.stem
+                if name.lower() in seen:
+                    continue
+                seen.add(name.lower())
+                fonts.append({
+                    "name": name,
+                    "path": str(font_file)
+                })
+    fonts.sort(key=lambda f: f["name"].lower())
+    return jsonify(fonts)
+
+
+@app.route('/api/thumbnails/file', methods=['GET'])
+def get_thumbnail_file():
+    """Serve an image file for thumbnail preview"""
+    raw_path = request.args.get('path')
+    try:
+        path = _safe_image_path(raw_path)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    return send_file(str(path))
+
+
+@app.route('/api/thumbnails/frames', methods=['POST'])
+def get_thumbnail_frames():
+    """Extract preview frames from a video for thumbnail selection"""
+    data = request.json or {}
+    video_path = data.get('video_path')
+    if not video_path:
+        return jsonify({"error": "Video path is required"}), 400
+    if not Path(video_path).exists():
+        return jsonify({"error": "Video file not found"}), 404
+
+    frame_count = int(data.get('frame_count', 12))
+    scale_width = int(data.get('scale_width', 320))
+
+    try:
+        frames = _extract_video_frames(video_path, frame_count, scale_width)
+        info = video_processor.get_video_info(video_path)
+        return jsonify({
+            "video_path": video_path,
+            "video_name": Path(video_path).name,
+            "duration": info.duration if info else None,
+            "duration_formatted": format_duration(info.duration) if info else None,
+            "frames": frames
+        })
+    except subprocess.CalledProcessError as e:
+        return jsonify({"error": f"FFmpeg failed: {e}"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/thumbnails/generate', methods=['POST'])
+def generate_thumbnails():
+    """Generate thumbnails from selected backgrounds and overlay settings"""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    backgrounds = data.get('backgrounds', [])
+    if not backgrounds:
+        return jsonify({"error": "No backgrounds provided"}), 400
+
+    for item in backgrounds:
+        path = item.get('path')
+        if not path or not Path(path).exists():
+            return jsonify({"error": f"Background not found: {path}"}), 400
+
+    overlay = data.get('overlay') or {}
+    if overlay.get('type') == 'image':
+        overlay_path = overlay.get('path')
+        try:
+            _safe_image_path(overlay_path)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
+
+    output_dir_input = data.get('output_dir')
+    try:
+        output_dir = _resolve_output_dir(output_dir_input)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+    job = thumbnail_processor.create_job()
+    spec = thumbnail_processor.build_job_spec(data)
+
+    def process():
+        try:
+            thumbnail_processor.process_thumbnails(job, backgrounds, output_dir, spec)
+        except Exception as e:
+            job.status = "failed"
+            job.error = str(e)
+
+    thread = threading.Thread(target=process)
+    thread.start()
+    thumbnail_threads[job.id] = thread
+
+    return jsonify({"job_id": job.id})
+
+
+@app.route('/api/thumbnails/jobs/<job_id>', methods=['GET'])
+def get_thumbnail_job_status(job_id):
+    """Get thumbnail processing job status"""
+    job = thumbnail_processor.get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    return jsonify({
+        "id": job.id,
+        "status": job.status,
+        "progress": round(job.progress, 1),
+        "current_step": job.current_step,
+        "current_step_num": job.current_step_num,
+        "total_steps": job.total_steps,
+        "output_files": job.output_files,
+        "failures": job.failures,
+        "error": job.error
+    })
+
+
+@app.route('/api/thumbnails/jobs/<job_id>/cancel', methods=['POST'])
+def cancel_thumbnail_job(job_id):
+    """Cancel a thumbnail processing job"""
+    if thumbnail_processor.cancel_job(job_id):
+        return jsonify({"message": "Job cancelled"})
+    return jsonify({"error": "Could not cancel job"}), 400
 
 
 # ============== Video Info Routes ==============
