@@ -1927,77 +1927,343 @@ async function loadThumbnailFonts() {
     }
 }
 
-function populateFontSelects() {
-    initFontPicker('studio-font', 'Default');
-    initFontPicker('thumb-number-font', 'Auto');
+// ============== Font Modal ==============
+let fontModalState = {
+    targetId: null,
+    defaultLabel: 'Default',
+    selectedFontPath: '',
+    favorites: JSON.parse(localStorage.getItem('editflow_favorite_fonts') || '[]'),
+    filter: 'all'
+};
+
+const fontFaceCache = new Map();
+
+function hashString(value) {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+        hash = ((hash << 5) - hash) + value.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash);
 }
 
-function initFontPicker(targetId, defaultLabel) {
-    const listEl = document.getElementById(`${targetId}-list`);
-    const searchEl = document.getElementById(`${targetId}-search`);
-    const selectedEl = document.getElementById(`${targetId}-selected`);
-    const hiddenInput = document.getElementById(targetId);
-    if (!listEl || !searchEl || !selectedEl || !hiddenInput) return;
+function getFontCssFamily(font) {
+    if (!font || !font.path) return '';
+    if (font.cssFamily) return font.cssFamily;
+    const id = hashString(font.path);
+    font.cssFamily = `editflow-font-${id}`;
+    return font.cssFamily;
+}
 
-    const initialized = listEl.dataset.initialized === 'true';
+function ensureFontLoaded(font) {
+    if (!font || !font.path) return Promise.resolve(null);
+    if (!window.FontFace) return Promise.resolve(null);
 
-    const allFonts = [{ name: defaultLabel, path: '' }, ...state.thumbnail.fonts];
-    let filtered = allFonts;
-    let offset = 0;
-    const pageSize = 40;
-
-    const renderNext = () => {
-        const slice = filtered.slice(offset, offset + pageSize);
-        slice.forEach(font => {
-            const item = document.createElement('button');
-            item.type = 'button';
-            item.className = `font-item ${hiddenInput.value === font.path ? 'active' : ''}`;
-            item.dataset.fontPath = font.path;
-            item.innerHTML = `
-                <span class="font-name">${font.name}</span>
-                <span class="font-preview" style="font-family: '${font.name}', Inter, sans-serif;">AaBb 012345</span>
-            `;
-            item.addEventListener('click', () => {
-                hiddenInput.value = font.path;
-                selectedEl.textContent = font.name || defaultLabel;
-                listEl.querySelectorAll('.font-item').forEach(btn => btn.classList.remove('active'));
-                item.classList.add('active');
-                if (targetId === 'thumb-number-font') {
-                    syncNumberingElementFromForm();
-                } else {
-                    updateStudioFromInputs();
-                }
-            });
-            listEl.appendChild(item);
-        });
-        offset += slice.length;
-    };
-
-    const resetList = () => {
-        listEl.innerHTML = '';
-        offset = 0;
-        renderNext();
-    };
-
-    if (!initialized) {
-        searchEl.addEventListener('input', () => {
-            const term = searchEl.value.trim().toLowerCase();
-            filtered = term
-                ? allFonts.filter(font => font.name.toLowerCase().includes(term))
-                : allFonts;
-            resetList();
-        });
-
-        listEl.addEventListener('scroll', () => {
-            if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 20) {
-                renderNext();
-            }
-        });
-        listEl.dataset.initialized = 'true';
+    if (fontFaceCache.has(font.path)) {
+        return fontFaceCache.get(font.path);
     }
 
-    selectedEl.textContent = getFontNameByPath(hiddenInput.value) || defaultLabel;
-    resetList();
+    const family = getFontCssFamily(font);
+    const url = `/api/thumbnails/font?path=${encodeURIComponent(font.path)}`;
+    const fontFace = new FontFace(family, `url(${url})`);
+    const promise = fontFace.load()
+        .then((loaded) => {
+            document.fonts.add(loaded);
+            return family;
+        })
+        .catch(() => null);
+
+    fontFaceCache.set(font.path, promise);
+    return promise;
+}
+
+function populateFontSelects() {
+    // This is now just called to re-render if needed after fonts are loaded
+    // The click handlers use event delegation on document
+}
+
+function initFontSelectors() {
+    // Use event delegation on document body for font selector buttons
+    // This works even for buttons that are inside hidden sections
+    document.body.addEventListener('click', (e) => {
+        const btn = e.target.closest('.font-selector-btn');
+        if (!btn) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const targetId = btn.dataset.target;
+        if (!targetId) return;
+        
+        const defaultLabel = targetId === 'thumb-number-font' ? 'Auto' : 'Default';
+        
+        // Make sure fonts are loaded first
+        if (!state.thumbnail.fonts.length) {
+            loadThumbnailFonts().then(() => {
+                openFontModal(targetId, defaultLabel);
+            });
+        } else {
+            openFontModal(targetId, defaultLabel);
+        }
+    });
+    
+    // Initialize modal event listeners
+    initFontModal();
+}
+
+function initFontModal() {
+    const modal = document.getElementById('font-modal');
+    if (!modal) return;
+    
+    // Skip if already initialized
+    if (modal.dataset.init === 'true') return;
+    modal.dataset.init = 'true';
+    
+    const closeBtn = document.getElementById('font-modal-close');
+    const cancelBtn = document.getElementById('font-modal-cancel');
+    const selectBtn = document.getElementById('font-modal-select');
+    const searchInput = document.getElementById('font-modal-search');
+    const tabs = document.querySelectorAll('.font-modal-tab');
+    const listEl = document.getElementById('font-modal-list');
+    
+    closeBtn.addEventListener('click', closeFontModal);
+    cancelBtn.addEventListener('click', closeFontModal);
+    modal.querySelector('.modal-backdrop').addEventListener('click', closeFontModal);
+    
+    selectBtn.addEventListener('click', () => {
+        applyFontSelection();
+        closeFontModal();
+    });
+    
+    searchInput.addEventListener('input', () => renderFontList());
+    
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            tabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            fontModalState.filter = tab.dataset.filter;
+            renderFontList();
+        });
+    });
+    
+    // Lazy loading on scroll
+    listEl.addEventListener('scroll', () => {
+        if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 50) {
+            renderMoreFonts();
+        }
+    });
+}
+
+function openFontModal(targetId, defaultLabel) {
+    const modal = document.getElementById('font-modal');
+    const hiddenInput = document.getElementById(targetId);
+    
+    fontModalState.targetId = targetId;
+    fontModalState.defaultLabel = defaultLabel;
+    fontModalState.selectedFontPath = hiddenInput?.value || '';
+    fontModalState.filter = 'all';
+    fontModalState.offset = 0;
+    
+    // Reset UI
+    document.getElementById('font-modal-search').value = '';
+    document.querySelectorAll('.font-modal-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.filter === 'all');
+    });
+    
+    renderFontList();
+    updateFontModalPreview();
+    modal.classList.add('open');
+    
+    // Focus search
+    setTimeout(() => document.getElementById('font-modal-search').focus(), 100);
+}
+
+function closeFontModal() {
+    document.getElementById('font-modal').classList.remove('open');
+    fontModalState.targetId = null;
+}
+
+function renderFontList() {
+    const listEl = document.getElementById('font-modal-list');
+    const emptyEl = document.getElementById('font-modal-empty');
+    const searchTerm = document.getElementById('font-modal-search').value.trim().toLowerCase();
+    
+    // Build font list with default option first
+    const allFonts = [
+        { name: fontModalState.defaultLabel, path: '' },
+        ...state.thumbnail.fonts
+    ];
+    
+    // Filter fonts
+    let filtered = allFonts;
+    
+    if (fontModalState.filter === 'favorites') {
+        filtered = allFonts.filter(f => f.path === '' || fontModalState.favorites.includes(f.path));
+    }
+    
+    if (searchTerm) {
+        filtered = filtered.filter(f => f.name.toLowerCase().includes(searchTerm));
+    }
+    
+    fontModalState.filteredFonts = filtered;
+    fontModalState.offset = 0;
+    
+    listEl.innerHTML = '';
+    
+    if (filtered.length === 0) {
+        emptyEl.style.display = 'flex';
+        return;
+    }
+    
+    emptyEl.style.display = 'none';
+    renderMoreFonts();
+}
+
+function renderMoreFonts() {
+    const listEl = document.getElementById('font-modal-list');
+    const pageSize = 30;
+    const start = fontModalState.offset || 0;
+    const fonts = fontModalState.filteredFonts || [];
+    const slice = fonts.slice(start, start + pageSize);
+    
+    slice.forEach(font => {
+        const isFavorite = fontModalState.favorites.includes(font.path);
+        const isSelected = fontModalState.selectedFontPath === font.path;
+        const isDefault = font.path === '';
+        const fallbackFamily = font.name || 'Inter';
+        const cssFamily = getFontCssFamily(font) || fallbackFamily;
+        
+        const item = document.createElement('div');
+        item.className = `font-modal-item ${isSelected ? 'active' : ''}`;
+        item.dataset.fontPath = font.path;
+        
+        item.innerHTML = `
+            ${!isDefault ? `
+                <button type="button" class="font-modal-item-fav ${isFavorite ? 'favorited' : ''}" data-path="${font.path}" title="${isFavorite ? 'Remove from favorites' : 'Add to favorites'}">
+                    <svg viewBox="0 0 16 16" fill="${isFavorite ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.5">
+                        <path d="M8 1.5l2 4.5 5 .5-3.5 3.5 1 5-4.5-2.5-4.5 2.5 1-5L1 6.5l5-.5z"/>
+                    </svg>
+                </button>
+            ` : '<div style="width: 20px;"></div>'}
+            <div class="font-modal-item-info">
+                <span class="font-modal-item-name">${font.name}</span>
+                <span class="font-modal-item-preview" style="font-family: '${cssFamily}', Inter, sans-serif;">The quick brown fox jumps</span>
+            </div>
+        `;
+
+        const previewEl = item.querySelector('.font-modal-item-preview');
+        if (!isDefault && previewEl) {
+            ensureFontLoaded(font).then((loadedFamily) => {
+                if (loadedFamily) {
+                    previewEl.style.fontFamily = `'${loadedFamily}', Inter, sans-serif`;
+                }
+            });
+        }
+        
+        // Click to select
+        item.addEventListener('click', (e) => {
+            if (e.target.closest('.font-modal-item-fav')) return;
+            
+            listEl.querySelectorAll('.font-modal-item').forEach(i => i.classList.remove('active'));
+            item.classList.add('active');
+            fontModalState.selectedFontPath = font.path;
+            updateFontModalPreview(font);
+        });
+        
+        // Double-click to select and close
+        item.addEventListener('dblclick', (e) => {
+            if (e.target.closest('.font-modal-item-fav')) return;
+            fontModalState.selectedFontPath = font.path;
+            applyFontSelection();
+            closeFontModal();
+        });
+        
+        // Favorite button
+        const favBtn = item.querySelector('.font-modal-item-fav');
+        if (favBtn) {
+            favBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleFontFavorite(font.path, favBtn);
+            });
+        }
+        
+        listEl.appendChild(item);
+    });
+    
+    fontModalState.offset = start + slice.length;
+}
+
+function toggleFontFavorite(fontPath, btn) {
+    const idx = fontModalState.favorites.indexOf(fontPath);
+    if (idx >= 0) {
+        fontModalState.favorites.splice(idx, 1);
+        btn.classList.remove('favorited');
+        btn.querySelector('svg').setAttribute('fill', 'none');
+        btn.title = 'Add to favorites';
+    } else {
+        fontModalState.favorites.push(fontPath);
+        btn.classList.add('favorited');
+        btn.querySelector('svg').setAttribute('fill', 'currentColor');
+        btn.title = 'Remove from favorites';
+    }
+    localStorage.setItem('editflow_favorite_fonts', JSON.stringify(fontModalState.favorites));
+    
+    // Re-render if in favorites tab
+    if (fontModalState.filter === 'favorites') {
+        renderFontList();
+    }
+}
+
+function updateFontModalPreview(font) {
+    const previewEl = document.getElementById('font-modal-preview');
+    if (font) {
+        const cssFamily = getFontCssFamily(font) || font.name || 'Inter';
+        previewEl.style.fontFamily = `'${cssFamily}', Inter, sans-serif`;
+        if (font.path) {
+            ensureFontLoaded(font).then((loadedFamily) => {
+                if (loadedFamily) {
+                    previewEl.style.fontFamily = `'${loadedFamily}', Inter, sans-serif`;
+                }
+            });
+        }
+    } else {
+        const selectedFont = state.thumbnail.fonts.find(f => f.path === fontModalState.selectedFontPath);
+        if (selectedFont) {
+            const cssFamily = getFontCssFamily(selectedFont) || selectedFont.name || 'Inter';
+            previewEl.style.fontFamily = `'${cssFamily}', Inter, sans-serif`;
+            ensureFontLoaded(selectedFont).then((loadedFamily) => {
+                if (loadedFamily) {
+                    previewEl.style.fontFamily = `'${loadedFamily}', Inter, sans-serif`;
+                }
+            });
+        } else {
+            previewEl.style.fontFamily = 'Inter, sans-serif';
+        }
+    }
+}
+
+function applyFontSelection() {
+    const targetId = fontModalState.targetId;
+    if (!targetId) return;
+    
+    const hiddenInput = document.getElementById(targetId);
+    const selectedEl = document.getElementById(`${targetId}-selected`);
+    
+    if (hiddenInput) {
+        hiddenInput.value = fontModalState.selectedFontPath;
+    }
+    
+    if (selectedEl) {
+        const fontName = getFontNameByPath(fontModalState.selectedFontPath);
+        selectedEl.textContent = fontName || fontModalState.defaultLabel;
+    }
+    
+    // Trigger update
+    if (targetId === 'thumb-number-font') {
+        syncNumberingElementFromForm();
+    } else if (targetId === 'studio-font') {
+        updateStudioFromInputs();
+    }
 }
 
 function getFontNameByPath(path) {
@@ -2890,6 +3156,7 @@ function initOnboarding() {
 
 // ============== Decimal Stepper ==============
 function initDecimalSteppers() {
+    // Initialize stepper buttons
     document.querySelectorAll('.decimal-stepper-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const targetId = btn.dataset.target;
@@ -2912,6 +3179,9 @@ function initDecimalSteppers() {
             input.dispatchEvent(new Event('input', { bubbles: true }));
         });
     });
+    
+    // Simple approach: just let the inputs accept any text
+    // No special keydown handling needed for type="text" inputs
 }
 
 // ============== Init ==============
@@ -2924,6 +3194,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initThumbnailStudio();
     initOutputs();
     initDecimalSteppers();
+    initFontSelectors();
     loadProfileSelect();
     
     // Show onboarding for first-time users

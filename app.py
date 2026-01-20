@@ -45,6 +45,7 @@ IMAGE_EXTENSIONS = [
 ]
 
 ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+ALLOWED_FONT_EXTS = {'.ttf', '.otf', '.ttc', '.woff', '.woff2'}
 
 
 def _normalize_output_name(name: str, default_ext: str = ".mp4") -> tuple[str, str]:
@@ -130,6 +131,27 @@ def _safe_image_path(raw_path: str) -> Path:
     if path.suffix.lower() not in ALLOWED_IMAGE_EXTS:
         raise ValueError("Unsupported image format")
     return path
+
+
+def _safe_font_path(raw_path: str) -> Path:
+    if not raw_path:
+        raise ValueError("Font path is required")
+    path = Path(raw_path).expanduser()
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"Font not found: {raw_path}")
+    if path.suffix.lower() not in ALLOWED_FONT_EXTS:
+        raise ValueError("Unsupported font format")
+
+    fonts_dir = Path("C:/Windows/Fonts").resolve()
+    try:
+        resolved = path.resolve()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Font not found: {raw_path}")
+    try:
+        resolved.relative_to(fonts_dir)
+    except ValueError:
+        raise ValueError("Font must be inside Windows Fonts directory")
+    return resolved
 
 
 def _video_signature(video_path: str) -> str:
@@ -688,6 +710,17 @@ def get_thumbnail_file():
     raw_path = request.args.get('path')
     try:
         path = _safe_image_path(raw_path)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    return send_file(str(path))
+
+
+@app.route('/api/thumbnails/font', methods=['GET'])
+def get_thumbnail_font():
+    """Serve a font file for browser preview"""
+    raw_path = request.args.get('path')
+    try:
+        path = _safe_font_path(raw_path)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
     return send_file(str(path))

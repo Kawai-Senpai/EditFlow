@@ -595,7 +595,7 @@
                                             <div class="form-group">
                                                 <label class="form-label">Line Spacing</label>
                                                 <div class="decimal-stepper">
-                                                    <input type="text" id="thumb-number-line-height" class="form-input" value="1.1" inputmode="decimal">
+                                                    <input type="text" id="thumb-number-line-height" class="form-input" value="1.1" autocomplete="off">
                                                     <div class="decimal-stepper-btns">
                                                         <button type="button" class="decimal-stepper-btn" data-target="thumb-number-line-height" data-step="0.1" data-direction="up" tabindex="-1">
                                                             <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -609,7 +609,7 @@
                                             <div class="form-group">
                                                 <label class="form-label">Character Spacing</label>
                                                 <div class="decimal-stepper">
-                                                    <input type="text" id="thumb-number-letter-spacing" class="form-input" value="0" inputmode="decimal">
+                                                    <input type="text" id="thumb-number-letter-spacing" class="form-input" value="0" autocomplete="off">
                                                     <div class="decimal-stepper-btns">
                                                         <button type="button" class="decimal-stepper-btn" data-target="thumb-number-letter-spacing" data-step="0.5" data-direction="up" tabindex="-1">
                                                             <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -651,11 +651,12 @@
                                             <div class="form-group">
                                                 <label class="form-label">Font</label>
                                                 <input type="hidden" id="thumb-number-font" value="">
-                                                <div class="font-picker" data-target="thumb-number-font">
-                                                    <div class="font-selected" id="thumb-number-font-selected">Auto</div>
-                                                    <input type="text" id="thumb-number-font-search" class="form-input font-search" placeholder="Search fonts">
-                                                    <div class="font-list" id="thumb-number-font-list"></div>
-                                                </div>
+                                                <button type="button" class="font-selector-btn" id="thumb-number-font-btn" data-target="thumb-number-font">
+                                                    <span class="font-selector-name" id="thumb-number-font-selected">Auto</span>
+                                                    <svg class="font-selector-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                        <path d="M4 6l4 4 4-4"/>
+                                                    </svg>
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -677,15 +678,50 @@
                                 <div class="card-header-with-actions">
                                     <h3 class="card-title">Studio Overlay Builder</h3>
                                     <div class="preset-actions">
-                                        <button type="button" class="btn btn-outline btn-xs" id="studio-add-text">Add Text</button>
-                                        <button type="button" class="btn btn-outline btn-xs" id="studio-add-image">Add Image</button>
-                                        <button type="button" class="btn btn-ghost btn-xs" id="studio-duplicate">Duplicate</button>
-                                        <button type="button" class="btn btn-danger btn-xs" id="studio-delete">Delete</button>
+                                        <button type="button" class="btn btn-outline btn-xs" id="studio-add-text">
+                                            <svg class="btn-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                <path d="M3 3h10M8 3v10M5 13h6"/>
+                                            </svg>
+                                            Add Text
+                                        </button>
+                                        <button type="button" class="btn btn-outline btn-xs" id="studio-add-image">
+                                            <svg class="btn-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                <rect x="2" y="2" width="12" height="12" rx="1"/>
+                                                <circle cx="5.5" cy="5.5" r="1.5"/>
+                                                <path d="M14 10l-3-3-5 5"/>
+                                            </svg>
+                                            Add Image
+                                        </button>
+                                        <button type="button" class="btn btn-ghost btn-xs" id="studio-duplicate">
+                                            <svg class="btn-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                <rect x="5" y="5" width="9" height="9" rx="1"/>
+                                                <path d="M11 5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v7a1 1 0 001 1h2"/>
+                                            </svg>
+                                            Duplicate
+                                        </button>
+                                        <button type="button" class="btn btn-danger btn-xs" id="studio-delete">
+                                            <svg class="btn-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                <path d="M2 4h12M5.5 4V2.5a1 1 0 011-1h3a1 1 0 011 1V4M12.5 4v9a1.5 1.5 0 01-1.5 1.5H5A1.5 1.5 0 013.5 13V4"/>
+                                            </svg>
+                                            Delete
+                                        </button>
                                     </div>
                                 </div>
                                 <div class="studio-toolbar">
-                                    <button type="button" class="btn btn-ghost btn-xs studio-mode-btn active" data-mode="resize">Resize Text Area</button>
-                                    <button type="button" class="btn btn-ghost btn-xs studio-mode-btn" data-mode="scale">Scale</button>
+                                    <button type="button" class="btn btn-ghost btn-xs studio-mode-btn active" data-mode="resize" title="Resize the text area (text will wrap within bounds)">
+                                        <svg class="btn-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                            <rect x="3" y="3" width="10" height="10" rx="1" stroke-dasharray="2 1"/>
+                                            <path d="M11 7h2M11 9h2M3 7H1M3 9H1"/>
+                                        </svg>
+                                        Text Area
+                                    </button>
+                                    <button type="button" class="btn btn-ghost btn-xs studio-mode-btn" data-mode="scale" title="Scale the entire text element proportionally">
+                                        <svg class="btn-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                            <path d="M1 5V1h4M15 5V1h-4M1 11v4h4M15 11v4h-4"/>
+                                            <rect x="4" y="4" width="8" height="8" rx="1"/>
+                                        </svg>
+                                        Scale
+                                    </button>
                                 </div>
 
                                 <div class="studio-canvas-wrap" id="studio-canvas-wrap">
@@ -706,11 +742,12 @@
                                             <div class="form-group">
                                                 <label class="form-label">Font</label>
                                                 <input type="hidden" id="studio-font" value="">
-                                                <div class="font-picker" data-target="studio-font">
-                                                    <div class="font-selected" id="studio-font-selected">Default</div>
-                                                    <input type="text" id="studio-font-search" class="form-input font-search" placeholder="Search fonts">
-                                                    <div class="font-list" id="studio-font-list"></div>
-                                                </div>
+                                                <button type="button" class="font-selector-btn" id="studio-font-btn" data-target="studio-font">
+                                                    <span class="font-selector-name" id="studio-font-selected">Default</span>
+                                                    <svg class="font-selector-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                        <path d="M4 6l4 4 4-4"/>
+                                                    </svg>
+                                                </button>
                                             </div>
                                             <div class="form-group">
                                                 <label class="form-label">Font Size</label>
@@ -755,7 +792,7 @@
                                             <div class="form-group">
                                                 <label class="form-label">Line Spacing</label>
                                                 <div class="decimal-stepper">
-                                                    <input type="text" id="studio-line-height" class="form-input" value="1.1" inputmode="decimal">
+                                                    <input type="text" id="studio-line-height" class="form-input" value="1.1" autocomplete="off">
                                                     <div class="decimal-stepper-btns">
                                                         <button type="button" class="decimal-stepper-btn" data-target="studio-line-height" data-step="0.1" data-direction="up" tabindex="-1">
                                                             <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -769,7 +806,7 @@
                                             <div class="form-group">
                                                 <label class="form-label">Character Spacing</label>
                                                 <div class="decimal-stepper">
-                                                    <input type="text" id="studio-letter-spacing" class="form-input" value="0" inputmode="decimal">
+                                                    <input type="text" id="studio-letter-spacing" class="form-input" value="0" autocomplete="off">
                                                     <div class="decimal-stepper-btns">
                                                         <button type="button" class="decimal-stepper-btn" data-target="studio-letter-spacing" data-step="0.5" data-direction="up" tabindex="-1">
                                                             <svg viewBox="0 0 10 6"><path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1039,6 +1076,66 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-ghost" id="thumb-preset-modal-cancel">Cancel</button>
                 <button type="button" class="btn btn-primary" id="thumb-preset-modal-save">Save Preset</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Font Selector Modal -->
+    <div class="modal" id="font-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content font-modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">
+                    <svg class="modal-title-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M3 3h10M8 3v10M5 13h6"/>
+                    </svg>
+                    Select Font
+                </h3>
+                <button class="modal-close" id="font-modal-close">&times;</button>
+            </div>
+            <div class="font-modal-toolbar">
+                <div class="font-modal-search-wrap">
+                    <svg class="font-modal-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="7" cy="7" r="4.5"/>
+                        <path d="M10.5 10.5L14 14"/>
+                    </svg>
+                    <input type="text" id="font-modal-search" class="form-input" placeholder="Search fonts...">
+                </div>
+                <div class="font-modal-tabs">
+                    <button type="button" class="font-modal-tab active" data-filter="all">
+                        All
+                    </button>
+                    <button type="button" class="font-modal-tab" data-filter="favorites">
+                        <svg viewBox="0 0 16 16" fill="currentColor" stroke="none">
+                            <path d="M8 12.3l-4.9 2.6.9-5.4L0 5.6l5.5-.8L8 0l2.5 4.8 5.5.8-4 3.9.9 5.4z"/>
+                        </svg>
+                        Favorites
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body font-modal-body">
+                <div class="font-modal-list" id="font-modal-list"></div>
+                <div class="font-modal-empty" id="font-modal-empty" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M9.5 9.5L14.5 14.5M9.5 14.5L14.5 9.5M12 21a9 9 0 100-18 9 9 0 000 18z"/>
+                    </svg>
+                    <span>No fonts found</span>
+                </div>
+            </div>
+            <div class="modal-footer font-modal-footer">
+                <div class="font-modal-preview-wrap">
+                    <span class="font-modal-preview-label">Preview:</span>
+                    <span class="font-modal-preview" id="font-modal-preview">The quick brown fox</span>
+                </div>
+                <div class="font-modal-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="font-modal-cancel">Cancel</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="font-modal-select">
+                        <svg class="btn-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M2 8l4 4 8-8"/>
+                        </svg>
+                        Select Font
+                    </button>
+                </div>
             </div>
         </div>
     </div>

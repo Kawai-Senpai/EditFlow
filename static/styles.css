@@ -427,9 +427,16 @@ body {
     gap: 4px;
 }
 
-.btn-xs svg {
+.btn-xs svg,
+.btn-icon {
     width: 12px;
     height: 12px;
+    flex-shrink: 0;
+}
+
+.btn-icon {
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 /* ============== Settings Grid ============== */
@@ -1158,6 +1165,269 @@ body {
 .font-item .font-preview {
     font-size: 0.7rem;
     color: var(--text-primary);
+}
+
+/* ============== Font Selector Button ============== */
+.font-selector-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+    text-align: left;
+}
+
+.font-selector-btn:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+}
+
+.font-selector-name {
+    font-size: 0.65rem;
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+
+.font-selector-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    margin-left: 6px;
+}
+
+/* ============== Font Modal ============== */
+.font-modal-content {
+    max-width: 520px;
+    min-height: 500px;
+    max-height: 80vh;
+}
+
+.modal-title-icon {
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.font-modal-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+.font-modal-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.font-modal-search-icon {
+    position: absolute;
+    left: 10px;
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+.font-modal-toolbar .form-input {
+    padding-left: 32px;
+    font-size: 0.7rem;
+}
+
+.font-modal-tabs {
+    display: flex;
+    gap: 6px;
+}
+
+.font-modal-tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    font-size: 0.6rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.font-modal-tab:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.font-modal-tab.active {
+    background: var(--accent-light);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.font-modal-tab svg {
+    width: 10px;
+    height: 10px;
+}
+
+.font-modal-body {
+    padding: 12px 18px;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 250px;
+}
+
+.font-modal-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.font-modal-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+    text-align: left;
+}
+
+.font-modal-item:hover {
+    border-color: var(--border-light);
+    background: var(--bg-hover);
+}
+
+.font-modal-item.active {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+
+.font-modal-item-fav {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: var(--transition);
+    border-radius: var(--radius-sm);
+}
+
+.font-modal-item-fav:hover {
+    color: var(--warning);
+    background: var(--bg-hover);
+}
+
+.font-modal-item-fav.favorited {
+    color: var(--warning);
+}
+
+.font-modal-item-fav svg {
+    width: 12px;
+    height: 12px;
+}
+
+.font-modal-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.font-modal-item-name {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.font-modal-item-preview {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.font-modal-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 40px 20px;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+}
+
+.font-modal-empty svg {
+    width: 32px;
+    height: 32px;
+    opacity: 0.5;
+}
+
+.font-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+.font-modal-preview-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.font-modal-preview-label {
+    font-size: 0.55rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.font-modal-preview {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.font-modal-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
 }
 
 .studio-card .preset-actions { flex-wrap: wrap; }
