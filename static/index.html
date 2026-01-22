@@ -53,7 +53,7 @@
             </nav>
             
             <div class="sidebar-footer">
-                <p class="version">v1.0.0</p>
+                <p class="version">v1.1.0</p>
                 <p class="creator-link">by <a href="https://ranitbhowmick.com" target="_blank">Ranit Bhowmick</a></p>
             </div>
         </aside>
@@ -117,65 +117,81 @@
                     </div>
 
                     <!-- Trim Settings -->
-                    <div class="card" id="trim-settings-card" style="display: none;">
-                        <h3 class="card-title">Trim Videos</h3>
-                        <p class="card-subtitle">Remove unwanted portions from start/end of videos (e.g., recording artifacts)</p>
+                    <div class="card collapsible-card" id="trim-settings-card" style="display: none;">
+                        <div class="card-header-collapsible" data-target="trim-content">
+                            <div class="collapsible-title-row">
+                                <svg class="collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                                <span class="collapsible-title">Trim Videos</span>
+                                <span class="collapsible-subtitle">Remove unwanted portions from start/end of videos</span>
+                            </div>
+                        </div>
                         
-                        <div class="trim-controls">
-                            <div class="trim-global">
-                                <label class="toggle">
-                                    <input type="checkbox" id="trim-apply-all">
-                                    <span class="toggle-slider"></span>
-                                    <span class="toggle-label">Apply same trim to all videos</span>
-                                </label>
-                                <div class="trim-global-inputs" id="trim-global-inputs">
-                                    <div class="form-group">
-                                        <label class="form-label">Trim from Start</label>
-                                        <div class="input-with-unit">
-                                            <input type="number" id="trim-global-start" class="form-input" value="0" min="0" max="600" step="0.5">
-                                            <span class="input-unit">sec</span>
+                        <div class="card-content-collapsible" id="trim-content">
+                            <div class="trim-controls">
+                                <div class="trim-global">
+                                    <label class="toggle">
+                                        <input type="checkbox" id="trim-apply-all">
+                                        <span class="toggle-slider"></span>
+                                        <span class="toggle-label">Apply same trim to all videos</span>
+                                    </label>
+                                    <div class="trim-global-inputs" id="trim-global-inputs">
+                                        <div class="form-group">
+                                            <label class="form-label">Trim from Start</label>
+                                            <div class="input-with-unit">
+                                                <input type="number" id="trim-global-start" class="form-input" value="0" min="0" max="600" step="0.5">
+                                                <span class="input-unit">sec</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label">Trim from End</label>
-                                        <div class="input-with-unit">
-                                            <input type="number" id="trim-global-end" class="form-input" value="0" min="0" max="600" step="0.5">
-                                            <span class="input-unit">sec</span>
+                                        <div class="form-group">
+                                            <label class="form-label">Trim from End</label>
+                                            <div class="input-with-unit">
+                                                <input type="number" id="trim-global-end" class="form-input" value="0" min="0" max="600" step="0.5">
+                                                <span class="input-unit">sec</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div class="trim-list" id="trim-list">
-                                <!-- Per-video trim inputs will be generated here -->
+                                <div class="trim-list" id="trim-list">
+                                    <!-- Per-video trim inputs will be generated here -->
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- Audio Mixer Settings -->
-                    <div class="card" id="audio-mixer-card" style="display: none;">
-                        <h3 class="card-title">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="margin-right: 6px; vertical-align: text-bottom;">
-                                <path d="M9 18V5l12-2v13"></path>
-                                <circle cx="6" cy="18" r="3"></circle>
-                                <circle cx="18" cy="16" r="3"></circle>
-                            </svg>
-                            Audio Mixer
-                        </h3>
-                        <p class="card-subtitle">Mix multiple audio tracks with custom levels (e.g., Discord, Microphone, Game)</p>
-                        
-                        <div class="audio-mixer-controls">
-                            <div class="audio-global-controls">
-                                <label class="toggle">
-                                    <input type="checkbox" id="audio-apply-all" checked>
-                                    <span class="toggle-slider"></span>
-                                    <span class="toggle-label">Apply same mix to all videos</span>
-                                </label>
-                                <div class="audio-global-inputs" id="audio-global-inputs">
-                                    <!-- Global audio track controls will be generated here -->
-                                </div>
+                    <div class="card collapsible-card" id="audio-mixer-card" style="display: none;">
+                        <div class="card-header-collapsible" data-target="audio-mixer-content">
+                            <div class="collapsible-title-row">
+                                <svg class="collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                    <path d="M9 18V5l12-2v13"></path>
+                                    <circle cx="6" cy="18" r="3"></circle>
+                                    <circle cx="18" cy="16" r="3"></circle>
+                                </svg>
+                                <span class="collapsible-title">Audio Mixer</span>
+                                <span class="collapsible-subtitle">Mix multiple audio tracks with custom levels</span>
                             </div>
-                            <div class="audio-per-video-list" id="audio-per-video-list" style="display: none;">
-                                <!-- Per-video audio controls will be generated here -->
+                        </div>
+                        
+                        <div class="card-content-collapsible" id="audio-mixer-content">
+                            <div class="audio-mixer-controls">
+                                <div class="audio-global-controls">
+                                    <label class="toggle">
+                                        <input type="checkbox" id="audio-apply-all" checked>
+                                        <span class="toggle-slider"></span>
+                                        <span class="toggle-label">Apply same mix to all videos</span>
+                                    </label>
+                                    <div class="audio-global-inputs" id="audio-global-inputs">
+                                        <!-- Global audio track controls will be generated here -->
+                                    </div>
+                                </div>
+                                <div class="audio-per-video-list" id="audio-per-video-list" style="display: none;">
+                                    <!-- Per-video audio controls will be generated here -->
+                                </div>
                             </div>
                         </div>
                     </div>

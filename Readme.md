@@ -2,6 +2,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/FFmpeg-Required-007808?style=for-the-badge&logo=ffmpeg&logoColor=white" alt="FFmpeg">
   <img src="https://img.shields.io/badge/Flask-Backend-000000?style=for-the-badge&logo=flask&logoColor=white" alt="Flask">
+  <img src="https://img.shields.io/badge/Version-1.1.0-blue?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 </p>
 
@@ -24,6 +25,13 @@
 - **Trim videos** - Remove unwanted seconds from start/end of each clip
 - **Episode splitting** - Automatically split long recordings into episodes with configurable overlap
 
+### 🎧 Multi-Track Audio Mixing
+- **Support for multi-track recordings** (OBS, Streamlabs, etc.)
+- **Per-track volume control** - Adjust levels for each audio track independently
+- **Mute/Solo functionality** - Quickly isolate or mute specific tracks
+- **Audio preview** - Listen to your mix before processing
+- **Global or per-video settings** - Apply same mix to all videos or customize each
+
 ### 🎨 Branding System
 - **Intro/Outro support** - Prepend or overlay intro/outro clips with your branding
 - **Full overlap mode** - Overlay transparent intros/outros on top of video content
@@ -39,6 +47,7 @@
 - **Branding profiles** - Save and reuse branding configurations
 - **Non-destructive** - References original files, no unnecessary copies
 - **Output management** - Browse, preview, and manage rendered outputs
+- **Collapsible sections** - Clean UI with expandable trim and audio mixer panels
 
 ---
 
@@ -105,6 +114,17 @@
    - Set trim values if needed
 3. **Select Branding** - Choose a branding profile (optional)
 4. **Process** - Click "Process Videos" and watch the progress
+
+### Multi-Track Audio Mixing
+
+If your recordings have multiple audio tracks (e.g., OBS multi-track recording with separate mic, game, Discord):
+
+1. **Audio Mixer panel** - Automatically appears when multi-track videos are detected
+2. **Adjust volume** - Use sliders to set the level for each track (0-200%)
+3. **Mute (M)** - Temporarily silence a track
+4. **Solo (S)** - Listen only to selected tracks
+5. **Preview** - Click "Play Preview" to hear your mix before processing
+6. **Apply to all** - Toggle to apply same settings to all videos
 
 ### Branding Profiles
 

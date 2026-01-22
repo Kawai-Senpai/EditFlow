@@ -3698,10 +3698,28 @@ document.addEventListener('DOMContentLoaded', () => {
     initDecimalSteppers();
     initFontSelectors();
     loadProfileSelect();
+    initCollapsibleCards();
     
     // Show onboarding for first-time users
     setTimeout(initOnboarding, 500);
 });
+
+/**
+ * Initialize collapsible card behavior
+ */
+function initCollapsibleCards() {
+    document.querySelectorAll('.card-header-collapsible').forEach(header => {
+        header.addEventListener('click', (e) => {
+            // Don't toggle if clicking on controls inside header
+            if (e.target.closest('.toggle, .btn, input, select')) return;
+            
+            const card = header.closest('.collapsible-card');
+            if (card) {
+                card.classList.toggle('collapsed');
+            }
+        });
+    });
+}
 
 // Global functions for onclick handlers
 window.removeFile = removeFile;

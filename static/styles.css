@@ -186,6 +186,56 @@ body {
     font-weight: 400;
 }
 
+/* Collapsible Card */
+.collapsible-card .card-header-collapsible {
+    cursor: pointer;
+    user-select: none;
+}
+
+.collapsible-card .card-header-collapsible:hover {
+    opacity: 0.85;
+}
+
+.collapsible-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.collapsible-title {
+    font-size: 0.75rem;
+    font-weight: 900;
+}
+
+.collapsible-subtitle {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 4px;
+}
+
+.collapsible-card .collapse-icon {
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+.collapsible-card.collapsed .collapse-icon {
+    transform: rotate(-90deg);
+}
+
+.collapsible-card .card-content-collapsible {
+    transition: max-height 0.2s ease, opacity 0.2s ease;
+    overflow: hidden;
+    padding-top: 12px;
+}
+
+.collapsible-card.collapsed .card-content-collapsible {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+}
+
 /* ============== Trim Controls ============== */
 .trim-controls { display: flex; flex-direction: column; gap: 12px; }
 
