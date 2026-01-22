@@ -13,6 +13,19 @@ from .config import FFMPEG_PATH, FFPROBE_PATH, TEMP_DIR, OUTPUT_DIR, OUTPUT_PRES
 
 
 @dataclass
+class AudioTrackInfo:
+    """Audio track information"""
+    index: int  # Stream index in the file
+    track_index: int  # Audio-only index (0, 1, 2...)
+    codec: str
+    channels: int
+    sample_rate: int
+    title: Optional[str] = None
+    bitrate: Optional[int] = None
+    channel_layout: Optional[str] = None
+
+
+@dataclass
 class VideoInfo:
     """Video file information"""
     path: str
@@ -25,6 +38,7 @@ class VideoInfo:
     audio_codec: Optional[str] = None
     audio_bitrate: Optional[int] = None
     has_audio: bool = True
+    audio_tracks: list = field(default_factory=list)  # List of AudioTrackInfo
 
 
 @dataclass
@@ -95,15 +109,18 @@ class VideoProcessor:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             data = json.loads(result.stdout)
             
-            # Find video stream
+            # Find video stream and collect ALL audio streams
             video_stream = None
-            audio_stream = None
+            audio_streams = []
+            first_audio_stream = None
             
             for stream in data.get('streams', []):
                 if stream.get('codec_type') == 'video' and not video_stream:
                     video_stream = stream
-                elif stream.get('codec_type') == 'audio' and not audio_stream:
-                    audio_stream = stream
+                elif stream.get('codec_type') == 'audio':
+                    audio_streams.append(stream)
+                    if not first_audio_stream:
+                        first_audio_stream = stream
             
             if not video_stream:
                 return None
@@ -119,6 +136,21 @@ class VideoProcessor:
             # Get duration
             duration = float(data.get('format', {}).get('duration', 0))
             
+            # Build audio track info list
+            audio_tracks = []
+            for track_idx, stream in enumerate(audio_streams):
+                title = stream.get('tags', {}).get('title') or stream.get('tags', {}).get('TITLE')
+                audio_tracks.append(AudioTrackInfo(
+                    index=stream.get('index', 0),
+                    track_index=track_idx,
+                    codec=stream.get('codec_name', 'unknown'),
+                    channels=int(stream.get('channels', 2)),
+                    sample_rate=int(stream.get('sample_rate', 48000)),
+                    title=title,
+                    bitrate=int(stream.get('bit_rate', 0)) if stream.get('bit_rate') else None,
+                    channel_layout=stream.get('channel_layout')
+                ))
+            
             return VideoInfo(
                 path=file_path,
                 duration=duration,
@@ -127,9 +159,10 @@ class VideoProcessor:
                 fps=fps,
                 codec=video_stream.get('codec_name', 'unknown'),
                 bitrate=int(data.get('format', {}).get('bit_rate', 0)) if data.get('format', {}).get('bit_rate') else None,
-                audio_codec=audio_stream.get('codec_name') if audio_stream else None,
-                audio_bitrate=int(audio_stream.get('bit_rate', 0)) if audio_stream and audio_stream.get('bit_rate') else None,
-                has_audio=audio_stream is not None
+                audio_codec=first_audio_stream.get('codec_name') if first_audio_stream else None,
+                audio_bitrate=int(first_audio_stream.get('bit_rate', 0)) if first_audio_stream and first_audio_stream.get('bit_rate') else None,
+                has_audio=len(audio_streams) > 0,
+                audio_tracks=audio_tracks
             )
         except Exception as e:
             print(f"Error getting video info: {e}")
@@ -246,6 +279,164 @@ class VideoProcessor:
         codec = preset_config.get("audio_codec", "aac")
         return "aac" if codec == "copy" else codec
     
+    def _build_audio_mix_filter(self, input_idx: int, audio_mix: list, duration: float = None,
+                                 async_resample: bool = True) -> tuple[str, str]:
+        """
+        Build audio filter chain that mixes multiple audio tracks with volume levels.
+        
+        Args:
+            input_idx: The input file index in the FFmpeg command
+            audio_mix: List of dicts with {track_index, volume, mute, solo} for each track
+            duration: Optional duration limit for atrim
+            async_resample: Whether to apply async resampling
+        
+        Returns:
+            Tuple of (filter_string, output_label)
+        """
+        if not audio_mix:
+            # Default: use first audio track as-is
+            base_filter = f"[{input_idx}:a:0]"
+            if async_resample:
+                base_filter += "aresample=async=1"
+            if duration:
+                if async_resample:
+                    base_filter += f",atrim=duration={duration},asetpts=PTS-STARTPTS"
+                else:
+                    base_filter += f"atrim=duration={duration},asetpts=PTS-STARTPTS"
+            return base_filter + f"[a{input_idx}]", f"a{input_idx}"
+        
+        # Check for solo - if any track is solo, only include solo tracks
+        has_solo = any(t.get('solo', False) for t in audio_mix)
+        
+        filter_parts = []
+        mix_labels = []
+        
+        for track in audio_mix:
+            track_idx = track.get('track_index', 0)
+            volume = track.get('volume', 1.0)
+            muted = track.get('mute', False)
+            solo = track.get('solo', False)
+            
+            # Skip muted tracks
+            if muted:
+                continue
+            
+            # If solo mode is active, skip non-solo tracks
+            if has_solo and not solo:
+                continue
+            
+            label = f"at{input_idx}_{track_idx}"
+            
+            # Build individual track filter
+            track_filter = f"[{input_idx}:a:{track_idx}]"
+            filters = []
+            
+            if async_resample:
+                filters.append("aresample=async=1")
+            
+            if duration:
+                filters.append(f"atrim=duration={duration}")
+                filters.append("asetpts=PTS-STARTPTS")
+            
+            # Apply volume if not 1.0
+            if volume != 1.0:
+                filters.append(f"volume={volume}")
+            
+            if filters:
+                track_filter += ",".join(filters)
+            
+            track_filter += f"[{label}]"
+            filter_parts.append(track_filter)
+            mix_labels.append(f"[{label}]")
+        
+        # If all tracks are muted, generate silence
+        if not mix_labels:
+            silence = "anullsrc=channel_layout=stereo:sample_rate=48000"
+            if duration:
+                silence += f",atrim=duration={duration},asetpts=PTS-STARTPTS"
+            return f"{silence}[a{input_idx}]", f"a{input_idx}"
+        
+        # If only one track, no need for amix
+        if len(mix_labels) == 1:
+            return filter_parts[0], mix_labels[0].strip('[]')
+        
+        # Mix multiple tracks
+        output_label = f"amix{input_idx}"
+        mix_inputs = "".join(mix_labels)
+        filter_parts.append(f"{mix_inputs}amix=inputs={len(mix_labels)}:duration=first:normalize=0[{output_label}]")
+        
+        return ";".join(filter_parts), output_label
+    
+    def generate_audio_waveform(self, video_path: str, output_path: str, 
+                                 width: int = 800, height: int = 120,
+                                 track_index: int = 0, color: str = "0x3b82f6") -> bool:
+        """
+        Generate waveform image for an audio track.
+        
+        Args:
+            video_path: Path to the video file
+            output_path: Output PNG file path
+            width: Image width
+            height: Image height per track
+            track_index: Which audio track to visualize
+            color: Waveform color in 0xRRGGBB format
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            cmd = [
+                FFMPEG_PATH, "-y",
+                "-i", video_path,
+                "-filter_complex", f"[0:a:{track_index}]showwavespic=s={width}x{height}:colors={color}:scale=sqrt[out]",
+                "-map", "[out]",
+                "-frames:v", "1",
+                output_path
+            ]
+            subprocess.run(cmd, capture_output=True, check=True)
+            return True
+        except Exception as e:
+            print(f"Error generating waveform: {e}")
+            return False
+    
+    def generate_audio_preview(self, video_path: str, output_path: str,
+                               audio_mix: list, start_time: float = 0,
+                               duration: float = 15) -> bool:
+        """
+        Generate a short audio preview with the specified mix settings.
+        
+        Args:
+            video_path: Path to the video file
+            output_path: Output audio file path (mp3/aac)
+            audio_mix: List of dicts with {track_index, volume, mute, solo}
+            start_time: Start time in seconds
+            duration: Preview duration in seconds
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            filter_str, output_label = self._build_audio_mix_filter(
+                0, audio_mix, duration=duration, async_resample=False
+            )
+            
+            cmd = [
+                FFMPEG_PATH, "-y",
+                "-ss", str(start_time),
+                "-i", video_path,
+                "-filter_complex", filter_str,
+                "-map", f"[{output_label}]",
+                "-t", str(duration),
+                "-c:a", "aac",
+                "-b:a", "192k",
+                output_path
+            ]
+            subprocess.run(cmd, capture_output=True, check=True)
+            return True
+        except Exception as e:
+            print(f"Error generating audio preview: {e}")
+            return False
+
     def _run_ffmpeg(self, cmd: list, job: ProcessingJob, duration: float, progress_callback: Optional[Callable] = None):
         """Run FFmpeg command with progress tracking"""
         import threading
@@ -1038,12 +1229,21 @@ class VideoProcessor:
                             outro_full_overlap: bool = False,
                             subscribe_path: Optional[str] = None,
                             subscribe_interval: float = 300,
-                            subscribe_duration: float = 8) -> str:
-        """Render the full single-video pipeline in one FFmpeg pass."""
+                            subscribe_duration: float = 8,
+                            audio_mix_map: dict = None) -> str:
+        """
+        Render the full single-video pipeline in one FFmpeg pass.
+        
+        Args:
+            audio_mix_map: Dict mapping video path to audio mix settings.
+                           Each value is a list of {track_index, volume, mute, solo}
+                           If None or empty for a video, all tracks mixed at 1.0 volume.
+        """
         if not video_paths:
             raise ValueError("No video files provided")
 
         trim_map = trim_map or {}
+        audio_mix_map = audio_mix_map or {}
         preset_config = OUTPUT_PRESETS.get(preset, OUTPUT_PRESETS["youtube_1080p"])
         if transition_duration <= 0:
             transition = "cut"
@@ -1130,18 +1330,50 @@ class VideoProcessor:
         use_first_pts = transition != "cut" and len(video_paths) > 1
         audio_async = "aresample=async=1:first_pts=0" if use_first_pts else "aresample=async=1"
 
-        # Normalize main inputs.
+        # Normalize main inputs (video and audio with multi-track mixing).
         for i, info in enumerate(video_infos):
             duration = input_durations[i]
+            path = video_paths[i]
 
             video_filter = f"[{i}:v]{scale_filter},setsar=1,fps=30,trim=duration={duration},setpts=PTS-STARTPTS"
             filter_parts.append(f"{video_filter}[v{i}]")
 
             if info.has_audio:
-                audio_filter = f"[{i}:a]{audio_async},atrim=duration={duration},asetpts=PTS-STARTPTS"
+                # Get audio mix settings for this video
+                audio_mix = audio_mix_map.get(path, [])
+                
+                if audio_mix and len(info.audio_tracks) > 1:
+                    # Multi-track mixing with custom levels
+                    audio_filter_str, audio_label = self._build_audio_mix_filter(
+                        i, audio_mix, duration=duration, 
+                        async_resample=True
+                    )
+                    # The _build_audio_mix_filter returns a complete filter with output label
+                    # But we need to integrate with our naming scheme
+                    # Split the filter and rename the output
+                    if audio_label != f"a{i}":
+                        # Replace the output label in the filter
+                        audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")
+                    filter_parts.append(audio_filter_str)
+                else:
+                    # Single track or no mix settings - use default (first track or mix all)
+                    if len(info.audio_tracks) > 1 and not audio_mix:
+                        # Mix all tracks at 1.0 volume by default
+                        default_mix = [{"track_index": t.track_index, "volume": 1.0} for t in info.audio_tracks]
+                        audio_filter_str, audio_label = self._build_audio_mix_filter(
+                            i, default_mix, duration=duration,
+                            async_resample=True
+                        )
+                        if audio_label != f"a{i}":
+                            audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")
+                        filter_parts.append(audio_filter_str)
+                    else:
+                        # Single track video - use traditional filter
+                        audio_filter = f"[{i}:a]{audio_async},atrim=duration={duration},asetpts=PTS-STARTPTS[a{i}]"
+                        filter_parts.append(audio_filter)
             else:
-                audio_filter = f"anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration={duration},asetpts=PTS-STARTPTS"
-            filter_parts.append(f"{audio_filter}[a{i}]")
+                audio_filter = f"anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration={duration},asetpts=PTS-STARTPTS[a{i}]"
+                filter_parts.append(audio_filter)
 
         # Build main sequence (with optional transitions).
         main_video_label = "v0"

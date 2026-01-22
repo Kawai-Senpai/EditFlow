@@ -843,6 +843,20 @@ def get_video_info():
     if not info:
         return jsonify({"error": "Could not get video info"}), 400
     
+    # Build audio tracks list
+    audio_tracks = []
+    for track in info.audio_tracks:
+        audio_tracks.append({
+            "index": track.index,
+            "track_index": track.track_index,
+            "codec": track.codec,
+            "channels": track.channels,
+            "sample_rate": track.sample_rate,
+            "title": track.title,
+            "bitrate": track.bitrate,
+            "channel_layout": track.channel_layout
+        })
+    
     return jsonify({
         "path": info.path,
         "duration": info.duration,
@@ -851,7 +865,8 @@ def get_video_info():
         "height": info.height,
         "fps": round(info.fps, 2),
         "codec": info.codec,
-        "has_audio": info.has_audio
+        "has_audio": info.has_audio,
+        "audio_tracks": audio_tracks
     })
 
 
@@ -866,6 +881,20 @@ def get_videos_info():
     for path in data['paths']:
         info = video_processor.get_video_info(path)
         if info:
+            # Build audio tracks list
+            audio_tracks = []
+            for track in info.audio_tracks:
+                audio_tracks.append({
+                    "index": track.index,
+                    "track_index": track.track_index,
+                    "codec": track.codec,
+                    "channels": track.channels,
+                    "sample_rate": track.sample_rate,
+                    "title": track.title,
+                    "bitrate": track.bitrate,
+                    "channel_layout": track.channel_layout
+                })
+            
             results.append({
                 "path": info.path,
                 "filename": Path(info.path).name,
@@ -875,10 +904,80 @@ def get_videos_info():
                 "height": info.height,
                 "fps": round(info.fps, 2),
                 "codec": info.codec,
-                "has_audio": info.has_audio
+                "has_audio": info.has_audio,
+                "audio_tracks": audio_tracks
             })
     
     return jsonify(results)
+
+
+# ============== Audio Mixing Routes ==============
+
+@app.route('/api/audio/waveform', methods=['POST'])
+def generate_audio_waveform():
+    """Generate waveform image for an audio track"""
+    data = request.json
+    if not data or not data.get('path'):
+        return jsonify({"error": "Video path is required"}), 400
+    
+    video_path = data['path']
+    if not Path(video_path).exists():
+        return jsonify({"error": "Video file not found"}), 404
+    
+    track_index = int(data.get('track_index', 0))
+    width = int(data.get('width', 800))
+    height = int(data.get('height', 80))
+    color = data.get('color', '0x3b82f6')
+    
+    # Generate unique output path
+    signature = hashlib.md5(f"{video_path}|{track_index}".encode()).hexdigest()[:12]
+    output_path = TEMP_DIR / f"waveform_{signature}.png"
+    
+    try:
+        if video_processor.generate_audio_waveform(
+            video_path, str(output_path), 
+            width=width, height=height,
+            track_index=track_index, color=color
+        ):
+            return send_file(str(output_path), mimetype='image/png')
+        else:
+            return jsonify({"error": "Failed to generate waveform"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/audio/preview', methods=['POST'])
+def generate_audio_preview():
+    """Generate audio preview with mix settings applied"""
+    data = request.json
+    if not data or not data.get('path'):
+        return jsonify({"error": "Video path is required"}), 400
+    
+    video_path = data['path']
+    if not Path(video_path).exists():
+        return jsonify({"error": "Video file not found"}), 404
+    
+    audio_mix = data.get('audio_mix', [])
+    start_time = float(data.get('start_time', 0))
+    duration = float(data.get('duration', 15))
+    
+    # Generate unique output path
+    mix_signature = hashlib.md5(str(audio_mix).encode()).hexdigest()[:8]
+    signature = hashlib.md5(f"{video_path}|{start_time}".encode()).hexdigest()[:8]
+    output_path = TEMP_DIR / f"audio_preview_{signature}_{mix_signature}.m4a"
+    
+    try:
+        if video_processor.generate_audio_preview(
+            video_path, str(output_path),
+            audio_mix=audio_mix,
+            start_time=start_time,
+            duration=duration
+        ):
+            return send_file(str(output_path), mimetype='audio/mp4')
+        else:
+            return jsonify({"error": "Failed to generate audio preview"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ============== Processing Routes ==============
@@ -902,6 +1001,10 @@ def process_single_video():
     # Get trim settings (list of {path, trim_start, trim_end})
     trim_settings = data.get('trim_settings', [])
     trim_map = {t['path']: t for t in trim_settings}
+    
+    # Get audio mix settings (list of {path, tracks: [{track_index, volume, mute, solo}]})
+    audio_mix_settings = data.get('audio_mix_settings', [])
+    audio_mix_map = {a['path']: a.get('tracks', []) for a in audio_mix_settings}
     
     profile_id = data.get('profile_id')
     transition = data.get('transition', 'cut')
@@ -964,7 +1067,8 @@ def process_single_video():
                 outro_full_overlap=outro_full_overlap,
                 subscribe_path=subscribe_path,
                 subscribe_interval=subscribe_interval,
-                subscribe_duration=subscribe_duration
+                subscribe_duration=subscribe_duration,
+                audio_mix_map=audio_mix_map
             )
 
             job.output_files = [final_path]
@@ -1247,9 +1351,58 @@ def format_size(bytes: int) -> str:
     return f"{bytes:.1f} TB"
 
 
+def cleanup_temp_files():
+    """Clean up temporary files (audio previews, thumbnail frames, etc.)"""
+    import shutil
+    cleaned_count = 0
+    
+    try:
+        # Clean audio preview files
+        for f in TEMP_DIR.glob("audio_preview_*.m4a"):
+            try:
+                f.unlink()
+                cleaned_count += 1
+            except Exception:
+                pass
+        
+        # Clean waveform images
+        for f in TEMP_DIR.glob("waveform_*.png"):
+            try:
+                f.unlink()
+                cleaned_count += 1
+            except Exception:
+                pass
+        
+        # Clean thumbnail frame directories (older than 24 hours)
+        import time
+        current_time = time.time()
+        for d in THUMBNAIL_FRAMES_DIR.iterdir():
+            if d.is_dir():
+                try:
+                    # Check if directory is old (24 hours)
+                    dir_age = current_time - d.stat().st_mtime
+                    if dir_age > 86400:  # 24 hours in seconds
+                        shutil.rmtree(d)
+                        cleaned_count += 1
+                except Exception:
+                    pass
+        
+        if cleaned_count > 0:
+            print(f"[Cleanup] Removed {cleaned_count} temp files/folders")
+    except Exception as e:
+        print(f"[Cleanup] Error during cleanup: {e}")
+
+
 if __name__ == '__main__':
     print("\nEditFlow - Starting server...")
     print(f"Output folder: {OUTPUT_DIR}")
+    
+    # Clean up old temp files on startup (in background to not delay startup)
+    def _background_cleanup():
+        cleanup_temp_files()
+    
+    threading.Thread(target=_background_cleanup, daemon=True).start()
+    
     print(f"Open http://{HOST}:{PORT} in your browser\n")
     # Auto-open browser once when server starts (avoid double-open with reloader)
     if not DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true":

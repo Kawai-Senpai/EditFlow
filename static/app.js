@@ -12,6 +12,12 @@ const state = {
     editingProfile: null,
     renderPresets: [],
     selectedPresetId: null,
+    // Audio mixer state
+    audioMixer: {
+        globalSettings: {}, // Track name -> {volume, mute, solo}
+        applyToAll: true,   // Apply global settings to all videos
+        previewAudio: null  // Currently playing audio element
+    },
     thumbnail: {
         images: [],
         videos: [],
@@ -263,6 +269,9 @@ function renderFileList() {
     
     fileList.innerHTML = state.files.map((file, index) => {
         const ext = file.path.split('.').pop().toUpperCase();
+        const audioTrackCount = file.audio_tracks?.length || (file.has_audio ? 1 : 0);
+        const hasMultiTrack = audioTrackCount > 1;
+        
         return `
             <div class="file-item" draggable="true" data-index="${index}">
                 <div class="file-drag-handle">
@@ -282,6 +291,7 @@ function renderFileList() {
                         <span>${file.width}×${file.height}</span>
                         <span>${file.fps}fps</span>
                         <span class="auto-badge">${ext}</span>
+                        ${hasMultiTrack ? `<span class="auto-badge audio-badge" title="${audioTrackCount} audio tracks">🎵 ${audioTrackCount}</span>` : ''}
                     </div>
                 </div>
                 <button class="file-remove" onclick="removeFile(${index})" title="Remove">
@@ -303,6 +313,7 @@ function renderFileList() {
     }
     
     initFileDragSort();
+    updateAudioMixerCard(); // Update audio mixer visibility
 }
 
 function removeFile(index) {
@@ -410,6 +421,490 @@ function applyGlobalTrim() {
     
     // Update the per-video inputs if visible
     updateTrimSettings();
+}
+
+// ============== Audio Mixer ==============
+
+/**
+ * Get unique track signature for a file to detect common track layouts
+ */
+function getTrackSignature(file) {
+    if (!file.audio_tracks || file.audio_tracks.length === 0) return '';
+    return file.audio_tracks.map(t => `${t.title || 'Track'}:${t.channels}`).join('|');
+}
+
+/**
+ * Get a friendly name for an audio track
+ */
+function getTrackDisplayName(track, index) {
+    if (track.title) return track.title;
+    return `Track ${index + 1}`;
+}
+
+/**
+ * Check if all files have the same audio track layout
+ */
+function hasCommonTrackLayout() {
+    const multiTrackFiles = state.files.filter(f => f.audio_tracks?.length > 1);
+    if (multiTrackFiles.length < 2) return false;
+    
+    const firstSignature = getTrackSignature(multiTrackFiles[0]);
+    return multiTrackFiles.every(f => getTrackSignature(f) === firstSignature);
+}
+
+/**
+ * Update audio mixer card visibility and content
+ */
+function updateAudioMixerCard() {
+    const card = document.getElementById('audio-mixer-card');
+    if (!card) return;
+    
+    // Check if any file has multiple audio tracks
+    const hasMultiTrack = state.files.some(f => f.audio_tracks?.length > 1);
+    
+    card.style.display = hasMultiTrack ? 'block' : 'none';
+    
+    if (hasMultiTrack) {
+        renderAudioMixerContent();
+    }
+}
+
+/**
+ * Render the audio mixer content
+ */
+function renderAudioMixerContent() {
+    const globalInputs = document.getElementById('audio-global-inputs');
+    const perVideoList = document.getElementById('audio-per-video-list');
+    const applyAllCheckbox = document.getElementById('audio-apply-all');
+    
+    if (!globalInputs || !perVideoList) return;
+    
+    // Get files with multiple audio tracks
+    const multiTrackFiles = state.files.filter(f => f.audio_tracks?.length > 1);
+    if (multiTrackFiles.length === 0) return;
+    
+    // Check for common track layout
+    const hasCommon = hasCommonTrackLayout();
+    
+    // Build common track list (use first multi-track file as reference)
+    const refFile = multiTrackFiles[0];
+    const tracks = refFile.audio_tracks;
+    
+    // Initialize global settings if needed
+    tracks.forEach((track, i) => {
+        const trackName = getTrackDisplayName(track, i);
+        if (!state.audioMixer.globalSettings[trackName]) {
+            state.audioMixer.globalSettings[trackName] = {
+                volume: 1.0,
+                mute: false,
+                solo: false
+            };
+        }
+    });
+    
+    // Render global controls
+    globalInputs.innerHTML = tracks.map((track, i) => {
+        const trackName = getTrackDisplayName(track, i);
+        const settings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false };
+        const volumePercent = Math.round(settings.volume * 100);
+        
+        return `
+            <div class="audio-track-control" data-track="${trackName}">
+                <div class="audio-track-header">
+                    <span class="audio-track-name">${trackName}</span>
+                    <span class="audio-track-info">${track.channels}ch • ${track.codec}</span>
+                </div>
+                <div class="audio-track-controls">
+                    <div class="audio-volume-slider">
+                        <input type="range" class="audio-volume-input" 
+                               data-track="${trackName}" 
+                               min="0" max="200" value="${volumePercent}"
+                               title="Volume: ${volumePercent}%">
+                        <span class="audio-volume-value">${volumePercent}%</span>
+                    </div>
+                    <button class="audio-btn ${settings.mute ? 'active' : ''}" 
+                            data-track="${trackName}" data-action="mute" 
+                            title="Mute">M</button>
+                    <button class="audio-btn ${settings.solo ? 'active' : ''}" 
+                            data-track="${trackName}" data-action="solo" 
+                            title="Solo">S</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Get reference file for duration
+    const refFileDuration = refFile.duration || 0;
+    const defaultPreviewStart = Math.min(30, refFileDuration * 0.1); // Start at 10% or 30s
+    const previewStart = state.audioMixer.previewStart ?? defaultPreviewStart;
+    const previewDuration = state.audioMixer.previewDuration ?? 15;
+    
+    // Add preview section with time controls
+    globalInputs.innerHTML += `
+        <div class="audio-preview-section">
+            <div class="audio-preview-header" id="audio-preview-toggle">
+                <span class="audio-preview-label">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Preview Settings
+                </span>
+                <span class="audio-preview-chevron">▼</span>
+            </div>
+            <div class="audio-preview-settings" id="audio-preview-settings">
+                <div class="audio-preview-time-controls">
+                    <div class="audio-time-input">
+                        <label>Start at</label>
+                        <input type="number" id="audio-preview-start" class="form-input" 
+                               value="${previewStart.toFixed(1)}" min="0" max="${refFileDuration}" step="1">
+                        <span class="input-unit">sec</span>
+                    </div>
+                    <div class="audio-time-input">
+                        <label>Duration</label>
+                        <input type="number" id="audio-preview-duration" class="form-input" 
+                               value="${previewDuration}" min="5" max="60" step="5">
+                        <span class="input-unit">sec</span>
+                    </div>
+                    <div class="audio-time-input">
+                        <span class="audio-time-hint">of ${formatDuration(refFileDuration)}</span>
+                    </div>
+                </div>
+                <div class="audio-preview-controls">
+                    <button class="btn btn-outline btn-sm" id="audio-preview-btn" title="Preview audio mix">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        Play Preview
+                    </button>
+                    <button class="btn btn-ghost btn-sm" id="audio-preview-stop" title="Stop preview" style="display: none;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <rect x="6" y="4" width="4" height="16"></rect>
+                            <rect x="14" y="4" width="4" height="16"></rect>
+                        </svg>
+                        Stop
+                    </button>
+                    <span class="audio-preview-status"></span>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Per-video controls (shown when apply-all is unchecked)
+    perVideoList.innerHTML = multiTrackFiles.map((file, fileIndex) => {
+        const realIndex = state.files.indexOf(file);
+        
+        return `
+            <div class="audio-per-video-item">
+                <div class="audio-per-video-header" title="${file.path}">${file.name}</div>
+                <div class="audio-per-video-tracks">
+                    ${file.audio_tracks.map((track, i) => {
+                        const trackName = getTrackDisplayName(track, i);
+                        const fileSettings = file.audio_mix?.[i] || { volume: 1.0, mute: false, solo: false };
+                        const volumePercent = Math.round(fileSettings.volume * 100);
+                        
+                        return `
+                            <div class="audio-track-control compact" data-file="${realIndex}" data-track-index="${i}">
+                                <span class="audio-track-name">${trackName}</span>
+                                <div class="audio-track-controls">
+                                    <input type="range" class="audio-volume-input-file" 
+                                           data-file="${realIndex}" data-track-index="${i}"
+                                           min="0" max="200" value="${volumePercent}">
+                                    <span class="audio-volume-value">${volumePercent}%</span>
+                                    <button class="audio-btn-sm ${fileSettings.mute ? 'active' : ''}" 
+                                            data-file="${realIndex}" data-track-index="${i}" data-action="mute">M</button>
+                                    <button class="audio-btn-sm ${fileSettings.solo ? 'active' : ''}" 
+                                            data-file="${realIndex}" data-track-index="${i}" data-action="solo">S</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Attach event listeners
+    initAudioMixerEvents();
+}
+
+/**
+ * Initialize audio mixer event listeners
+ */
+function initAudioMixerEvents() {
+    // Global volume sliders
+    document.querySelectorAll('.audio-volume-input').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const trackName = e.target.dataset.track;
+            const volume = parseInt(e.target.value) / 100;
+            state.audioMixer.globalSettings[trackName].volume = volume;
+            e.target.nextElementSibling.textContent = `${e.target.value}%`;
+            
+            // Apply to all files if apply-all is checked
+            if (state.audioMixer.applyToAll) {
+                applyGlobalAudioMix();
+            }
+        });
+    });
+    
+    // Global mute/solo buttons
+    document.querySelectorAll('.audio-btn[data-action]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const trackName = e.target.dataset.track;
+            const action = e.target.dataset.action;
+            
+            if (action === 'mute') {
+                state.audioMixer.globalSettings[trackName].mute = !state.audioMixer.globalSettings[trackName].mute;
+            } else if (action === 'solo') {
+                state.audioMixer.globalSettings[trackName].solo = !state.audioMixer.globalSettings[trackName].solo;
+            }
+            
+            e.target.classList.toggle('active');
+            
+            if (state.audioMixer.applyToAll) {
+                applyGlobalAudioMix();
+            }
+        });
+    });
+    
+    // Per-file volume sliders
+    document.querySelectorAll('.audio-volume-input-file').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const fileIndex = parseInt(e.target.dataset.file);
+            const trackIndex = parseInt(e.target.dataset.trackIndex);
+            const volume = parseInt(e.target.value) / 100;
+            
+            ensureFileAudioMix(fileIndex);
+            state.files[fileIndex].audio_mix[trackIndex].volume = volume;
+            e.target.nextElementSibling.textContent = `${e.target.value}%`;
+        });
+    });
+    
+    // Per-file mute/solo buttons
+    document.querySelectorAll('.audio-btn-sm[data-action]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const fileIndex = parseInt(e.target.dataset.file);
+            const trackIndex = parseInt(e.target.dataset.trackIndex);
+            const action = e.target.dataset.action;
+            
+            ensureFileAudioMix(fileIndex);
+            
+            if (action === 'mute') {
+                state.files[fileIndex].audio_mix[trackIndex].mute = !state.files[fileIndex].audio_mix[trackIndex].mute;
+            } else if (action === 'solo') {
+                state.files[fileIndex].audio_mix[trackIndex].solo = !state.files[fileIndex].audio_mix[trackIndex].solo;
+            }
+            
+            e.target.classList.toggle('active');
+        });
+    });
+    
+    // Preview settings toggle (collapsible)
+    const previewToggle = document.getElementById('audio-preview-toggle');
+    if (previewToggle) {
+        previewToggle.addEventListener('click', () => {
+            const settings = document.getElementById('audio-preview-settings');
+            const chevron = previewToggle.querySelector('.audio-preview-chevron');
+            if (settings) {
+                const isExpanded = settings.style.display !== 'none';
+                settings.style.display = isExpanded ? 'none' : 'block';
+                if (chevron) chevron.textContent = isExpanded ? '▶' : '▼';
+            }
+        });
+    }
+    
+    // Preview time inputs
+    const previewStartInput = document.getElementById('audio-preview-start');
+    const previewDurationInput = document.getElementById('audio-preview-duration');
+    
+    if (previewStartInput) {
+        previewStartInput.addEventListener('change', (e) => {
+            state.audioMixer.previewStart = parseFloat(e.target.value) || 0;
+        });
+    }
+    if (previewDurationInput) {
+        previewDurationInput.addEventListener('change', (e) => {
+            state.audioMixer.previewDuration = parseInt(e.target.value) || 15;
+        });
+    }
+    
+    // Preview play button
+    const previewBtn = document.getElementById('audio-preview-btn');
+    if (previewBtn) {
+        previewBtn.addEventListener('click', previewAudioMix);
+    }
+    
+    // Preview stop button
+    const stopBtn = document.getElementById('audio-preview-stop');
+    if (stopBtn) {
+        stopBtn.addEventListener('click', stopAudioPreview);
+    }
+    
+    // Apply-all toggle
+    const applyAllCheckbox = document.getElementById('audio-apply-all');
+    if (applyAllCheckbox) {
+        applyAllCheckbox.addEventListener('change', (e) => {
+            state.audioMixer.applyToAll = e.target.checked;
+            const perVideoList = document.getElementById('audio-per-video-list');
+            if (perVideoList) {
+                perVideoList.style.display = e.target.checked ? 'none' : 'block';
+            }
+            
+            if (e.target.checked) {
+                applyGlobalAudioMix();
+            }
+        });
+    }
+}
+
+/**
+ * Ensure a file has audio_mix array initialized
+ */
+function ensureFileAudioMix(fileIndex) {
+    const file = state.files[fileIndex];
+    if (!file.audio_mix) {
+        file.audio_mix = file.audio_tracks.map((track, i) => ({
+            track_index: i,
+            volume: 1.0,
+            mute: false,
+            solo: false
+        }));
+    }
+}
+
+/**
+ * Apply global audio mix settings to all files
+ */
+function applyGlobalAudioMix() {
+    state.files.forEach((file, fileIndex) => {
+        if (!file.audio_tracks || file.audio_tracks.length <= 1) return;
+        
+        file.audio_mix = file.audio_tracks.map((track, i) => {
+            const trackName = getTrackDisplayName(track, i);
+            const globalSettings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false };
+            
+            return {
+                track_index: i,
+                volume: globalSettings.volume,
+                mute: globalSettings.mute,
+                solo: globalSettings.solo
+            };
+        });
+    });
+}
+
+/**
+ * Preview audio mix for the first multi-track video
+ */
+async function previewAudioMix() {
+    const previewBtn = document.getElementById('audio-preview-btn');
+    const stopBtn = document.getElementById('audio-preview-stop');
+    const statusEl = document.querySelector('.audio-preview-status');
+    
+    // Find first multi-track file
+    const file = state.files.find(f => f.audio_tracks?.length > 1);
+    if (!file) {
+        showToast('No multi-track video to preview', 'warning');
+        return;
+    }
+    
+    // Stop any existing preview
+    stopAudioPreview();
+    
+    // Get preview time settings
+    const startTime = state.audioMixer.previewStart ?? (file.trim_start || 0);
+    const duration = state.audioMixer.previewDuration ?? 15;
+    
+    // Build audio mix settings
+    const audioMix = file.audio_tracks.map((track, i) => {
+        const trackName = getTrackDisplayName(track, i);
+        const settings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false };
+        
+        return {
+            track_index: i,
+            volume: settings.volume,
+            mute: settings.mute,
+            solo: settings.solo
+        };
+    });
+    
+    previewBtn.disabled = true;
+    if (stopBtn) stopBtn.style.display = 'none';
+    if (statusEl) statusEl.textContent = 'Generating...';
+    
+    try {
+        const response = await fetch('/api/audio/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                path: file.path,
+                audio_mix: audioMix,
+                start_time: startTime,
+                duration: duration
+            })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Preview failed');
+        }
+        
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        
+        const audio = new Audio(url);
+        state.audioMixer.previewAudio = audio;
+        
+        audio.onended = () => {
+            if (statusEl) statusEl.textContent = '';
+            previewBtn.disabled = false;
+            if (stopBtn) stopBtn.style.display = 'none';
+            state.audioMixer.previewAudio = null;
+        };
+        
+        audio.onerror = () => {
+            if (statusEl) statusEl.textContent = 'Playback error';
+            previewBtn.disabled = false;
+            if (stopBtn) stopBtn.style.display = 'none';
+        };
+        
+        if (statusEl) statusEl.textContent = 'Playing...';
+        if (stopBtn) stopBtn.style.display = 'inline-flex';
+        previewBtn.disabled = false;
+        audio.play();
+        
+    } catch (err) {
+        showToast(`Preview failed: ${err.message}`, 'error');
+        if (statusEl) statusEl.textContent = '';
+        previewBtn.disabled = false;
+    }
+}
+
+/**
+ * Stop audio preview playback
+ */
+function stopAudioPreview() {
+    if (state.audioMixer.previewAudio) {
+        state.audioMixer.previewAudio.pause();
+        state.audioMixer.previewAudio = null;
+    }
+    
+    const stopBtn = document.getElementById('audio-preview-stop');
+    const statusEl = document.querySelector('.audio-preview-status');
+    
+    if (stopBtn) stopBtn.style.display = 'none';
+    if (statusEl) statusEl.textContent = '';
+}
+
+/**
+ * Get audio mix settings formatted for the API
+ */
+function getAudioMixSettings() {
+    return state.files
+        .filter(f => f.audio_mix && f.audio_tracks?.length > 1)
+        .map(f => ({
+            path: f.path,
+            tracks: f.audio_mix
+        }));
 }
 
 // ============== Settings ==============
@@ -693,14 +1188,20 @@ async function startProcessing() {
     const subscribeInterval = parseFloat(document.getElementById('subscribe-interval').value) * 60; // Convert to seconds
     
     // Apply global trim if enabled
-    const applyGlobalTrim = document.getElementById('trim-apply-all').checked;
-    if (applyGlobalTrim) {
+    const applyGlobalTrimSetting = document.getElementById('trim-apply-all').checked;
+    if (applyGlobalTrimSetting) {
         const trimStart = parseFloat(document.getElementById('trim-global-start').value) || 0;
         const trimEnd = parseFloat(document.getElementById('trim-global-end').value) || 0;
         state.files.forEach(f => {
             f.trim_start = trimStart;
             f.trim_end = trimEnd;
         });
+    }
+    
+    // Apply global audio mix if enabled
+    const applyGlobalAudioSetting = document.getElementById('audio-apply-all')?.checked ?? true;
+    if (applyGlobalAudioSetting) {
+        applyGlobalAudioMix();
     }
     
     const data = {
@@ -710,6 +1211,7 @@ async function startProcessing() {
             trim_start: f.trim_start || 0,
             trim_end: f.trim_end || 0
         })),
+        audio_mix_settings: getAudioMixSettings(),
         profile_id: profileId || null,
         transition,
         transition_duration: transitionDuration,
