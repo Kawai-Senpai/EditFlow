@@ -24,6 +24,8 @@ from core.video_processor import video_processor
 from core.render_preset_manager import render_preset_manager
 from core.thumbnail_processor import thumbnail_processor
 from core.thumbnail_settings_manager import thumbnail_settings_manager
+from core.audio_preset_manager import audio_preset_manager
+from core.voice_effects_processor import voice_effects_processor
 
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -960,9 +962,11 @@ def generate_audio_preview():
     audio_mix = data.get('audio_mix', [])
     start_time = float(data.get('start_time', 0))
     duration = float(data.get('duration', 15))
+    voice_effects_preset_id = data.get('voice_effects_preset_id')
     
     # Generate unique output path
-    mix_signature = hashlib.md5(str(audio_mix).encode()).hexdigest()[:8]
+    voice_sig = voice_effects_preset_id or "none"
+    mix_signature = hashlib.md5(f"{audio_mix}|{voice_sig}".encode()).hexdigest()[:8]
     signature = hashlib.md5(f"{video_path}|{start_time}".encode()).hexdigest()[:8]
     output_path = TEMP_DIR / f"audio_preview_{signature}_{mix_signature}.m4a"
     
@@ -971,13 +975,243 @@ def generate_audio_preview():
             video_path, str(output_path),
             audio_mix=audio_mix,
             start_time=start_time,
-            duration=duration
+            duration=duration,
+            voice_effects_preset_id=voice_effects_preset_id
         ):
             return send_file(str(output_path), mimetype='audio/mp4')
         else:
             return jsonify({"error": "Failed to generate audio preview"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ============== Audio Preset Routes ==============
+
+@app.route('/api/audio-presets', methods=['GET'])
+def get_audio_presets():
+    """Get all audio mixing presets"""
+    return jsonify(audio_preset_manager.get_all_presets())
+
+
+@app.route('/api/audio-presets', methods=['POST'])
+def create_audio_preset():
+    """Create a new audio mixing preset"""
+    data = request.json
+    if not data or not data.get('name'):
+        return jsonify({"error": "Preset name is required"}), 400
+    
+    preset = audio_preset_manager.create_preset(
+        name=data['name'],
+        tracks=data.get('tracks', {}),
+        description=data.get('description', ''),
+        voice_effects=data.get('voiceEffects')
+    )
+    return jsonify(preset)
+
+
+@app.route('/api/audio-presets/<preset_id>', methods=['GET'])
+def get_audio_preset(preset_id):
+    """Get a specific audio mixing preset"""
+    preset = audio_preset_manager.get_preset(preset_id)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/audio-presets/<preset_id>', methods=['PUT'])
+def update_audio_preset(preset_id):
+    """Update an audio mixing preset"""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    preset = audio_preset_manager.update_preset(preset_id, data)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/audio-presets/<preset_id>', methods=['DELETE'])
+def delete_audio_preset(preset_id):
+    """Delete an audio mixing preset"""
+    if audio_preset_manager.delete_preset(preset_id):
+        return jsonify({"success": True})
+    return jsonify({"error": "Cannot delete default preset or preset not found"}), 400
+
+
+@app.route('/api/audio/track-types', methods=['GET'])
+def get_track_types():
+    """Get available track types for tagging"""
+    return jsonify(audio_preset_manager.get_track_types())
+
+
+@app.route('/api/audio/auto-level', methods=['POST'])
+def calculate_auto_levels():
+    """Calculate auto-leveled volumes based on LUFS analysis and track types"""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    video_path = data.get('video_path')
+    track_types = data.get('track_types', {})
+    
+    if not video_path:
+        # Fallback to type-based levels
+        levels = audio_preset_manager.calculate_auto_levels(track_types)
+        return jsonify({"levels": levels, "analyzed": False})
+    
+    if not Path(video_path).exists():
+        return jsonify({"error": "Video file not found"}), 404
+    
+    # Analyze all audio tracks
+    analysis = video_processor.analyze_all_tracks_loudness(video_path, duration=30)
+    
+    if not analysis:
+        # Fallback to type-based levels
+        levels = audio_preset_manager.calculate_auto_levels(track_types)
+        return jsonify({"levels": levels, "analyzed": False})
+    
+    # Calculate levels based on actual loudness + track types
+    levels = audio_preset_manager.calculate_auto_levels_from_analysis(analysis, track_types)
+    
+    return jsonify({
+        "levels": levels, 
+        "analyzed": True,
+        "analysis": analysis  # Include raw analysis for UI display
+    })
+
+
+@app.route('/api/audio/analyze', methods=['POST'])
+def analyze_audio_tracks():
+    """Analyze loudness of all audio tracks in a video"""
+    data = request.json
+    if not data or not data.get('video_path'):
+        return jsonify({"error": "Video path is required"}), 400
+    
+    video_path = data['video_path']
+    if not Path(video_path).exists():
+        return jsonify({"error": "Video file not found"}), 404
+    
+    duration = float(data.get('duration', 30))  # Analyze first 30 seconds by default
+    
+    analysis = video_processor.analyze_all_tracks_loudness(video_path, duration)
+    
+    return jsonify({"analysis": analysis})
+
+
+# ============== Voice Effects Routes ==============
+
+@app.route('/api/voice-effects/presets', methods=['GET'])
+def get_voice_effects_presets():
+    """Get all voice effects presets"""
+    return jsonify(voice_effects_processor.get_all_presets())
+
+
+@app.route('/api/voice-effects/presets', methods=['POST'])
+def create_voice_effects_preset():
+    """Create a new voice effects preset"""
+    data = request.json
+    if not data or not data.get('name'):
+        return jsonify({"error": "Preset name is required"}), 400
+    
+    preset = voice_effects_processor.create_preset(
+        name=data['name'],
+        settings=data.get('settings', {}),
+        description=data.get('description', '')
+    )
+    return jsonify(preset)
+
+
+@app.route('/api/voice-effects/presets/<preset_id>', methods=['GET'])
+def get_voice_effects_preset(preset_id):
+    """Get a specific voice effects preset"""
+    preset = voice_effects_processor.get_preset(preset_id)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/voice-effects/presets/<preset_id>', methods=['PUT'])
+def update_voice_effects_preset(preset_id):
+    """Update a voice effects preset"""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    preset = voice_effects_processor.update_preset(preset_id, data)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+    return jsonify(preset)
+
+
+@app.route('/api/voice-effects/presets/<preset_id>', methods=['DELETE'])
+def delete_voice_effects_preset(preset_id):
+    """Delete a voice effects preset"""
+    if voice_effects_processor.delete_preset(preset_id):
+        return jsonify({"success": True})
+    return jsonify({"error": "Cannot delete default preset or preset not found"}), 400
+
+
+@app.route('/api/voice-effects/preview', methods=['POST'])
+def generate_voice_effects_preview():
+    """Generate audio preview with voice effects applied to all voice tracks mixed together"""
+    data = request.json
+    if not data or not data.get('path'):
+        return jsonify({"error": "Video/audio path is required"}), 400
+    
+    video_path = data['path']
+    if not Path(video_path).exists():
+        return jsonify({"error": "File not found"}), 404
+    
+    # Get preset or custom settings
+    preset_id = data.get('preset_id')
+    if preset_id:
+        preset = voice_effects_processor.get_preset(preset_id)
+        if not preset:
+            return jsonify({"error": "Voice effects preset not found"}), 404
+    else:
+        preset = data.get('settings', {})
+    
+    # Get all voice track indices (or fall back to single track)
+    voice_track_indices = data.get('voice_track_indices', [])
+    if not voice_track_indices:
+        # Legacy support: use single track_index
+        track_index = int(data.get('track_index', 0))
+        voice_track_indices = [track_index]
+    
+    start_time = float(data.get('start_time', 0))
+    duration = float(data.get('duration', 15))
+    
+    output_path = voice_effects_processor.generate_preview_multi_track(
+        video_path=video_path,
+        preset=preset,
+        voice_track_indices=voice_track_indices,
+        start_time=start_time,
+        duration=duration
+    )
+    
+    if output_path:
+        return send_file(output_path, mimetype='audio/mp4')
+    return jsonify({"error": "Failed to generate voice effects preview"}), 500
+
+
+@app.route('/api/voice-effects/filter-chain', methods=['POST'])
+def get_voice_effects_filter_chain():
+    """Get the FFmpeg filter chain for a voice effects preset"""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    preset_id = data.get('preset_id')
+    if preset_id:
+        preset = voice_effects_processor.get_preset(preset_id)
+        if not preset:
+            return jsonify({"error": "Preset not found"}), 404
+    else:
+        preset = data.get('settings', {})
+    
+    filter_chain = voice_effects_processor.build_filter_chain(preset)
+    return jsonify({"filter_chain": filter_chain})
 
 
 # ============== Processing Routes ==============
@@ -1005,6 +1239,9 @@ def process_single_video():
     # Get audio mix settings (list of {path, tracks: [{track_index, volume, mute, solo}]})
     audio_mix_settings = data.get('audio_mix_settings', [])
     audio_mix_map = {a['path']: a.get('tracks', []) for a in audio_mix_settings}
+    
+    # Get voice effects preset ID
+    voice_effects_preset_id = data.get('voice_effects_preset_id')
     
     profile_id = data.get('profile_id')
     transition = data.get('transition', 'cut')
@@ -1068,7 +1305,8 @@ def process_single_video():
                 subscribe_path=subscribe_path,
                 subscribe_interval=subscribe_interval,
                 subscribe_duration=subscribe_duration,
-                audio_mix_map=audio_mix_map
+                audio_mix_map=audio_mix_map,
+                voice_effects_preset_id=voice_effects_preset_id
             )
 
             job.output_files = [final_path]

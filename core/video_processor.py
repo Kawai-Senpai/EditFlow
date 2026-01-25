@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional, Callable
 from dataclasses import dataclass, field
 from .config import FFMPEG_PATH, FFPROBE_PATH, TEMP_DIR, OUTPUT_DIR, OUTPUT_PRESETS, TRANSITIONS, HW_ENCODERS
+from .voice_effects_processor import voice_effects_processor
 
 
 @dataclass
@@ -280,15 +281,26 @@ class VideoProcessor:
         return "aac" if codec == "copy" else codec
     
     def _build_audio_mix_filter(self, input_idx: int, audio_mix: list, duration: float = None,
-                                 async_resample: bool = True) -> tuple[str, str]:
+                                 async_resample: bool = True, 
+                                 voice_effects_preset_id: str = None,
+                                 normalize_first: bool = True) -> tuple[str, str]:
         """
         Build audio filter chain that mixes multiple audio tracks with volume levels.
         
+        Workflow for proper audio leveling:
+        1. Extract each track
+        2. Normalize each track to a common reference level (-16 LUFS)
+        3. Apply relative volume adjustments based on track types
+        4. Mix all tracks together
+        5. Apply final limiter to prevent clipping
+        
         Args:
             input_idx: The input file index in the FFmpeg command
-            audio_mix: List of dicts with {track_index, volume, mute, solo} for each track
+            audio_mix: List of dicts with {track_index, volume, mute, solo, trackType} for each track
             duration: Optional duration limit for atrim
             async_resample: Whether to apply async resampling
+            voice_effects_preset_id: Optional voice effects preset ID to apply to voice tracks
+            normalize_first: Whether to normalize tracks before applying volume (recommended)
         
         Returns:
             Tuple of (filter_string, output_label)
@@ -305,6 +317,11 @@ class VideoProcessor:
                     base_filter += f"atrim=duration={duration},asetpts=PTS-STARTPTS"
             return base_filter + f"[a{input_idx}]", f"a{input_idx}"
         
+        # Get voice effects filter chain if preset is specified
+        voice_filter_chain = ""
+        if voice_effects_preset_id:
+            voice_filter_chain = voice_effects_processor.get_filter_for_track(voice_effects_preset_id)
+        
         # Check for solo - if any track is solo, only include solo tracks
         has_solo = any(t.get('solo', False) for t in audio_mix)
         
@@ -316,6 +333,7 @@ class VideoProcessor:
             volume = track.get('volume', 1.0)
             muted = track.get('mute', False)
             solo = track.get('solo', False)
+            track_type = track.get('trackType', 'other')
             
             # Skip muted tracks
             if muted:
@@ -338,7 +356,19 @@ class VideoProcessor:
                 filters.append(f"atrim=duration={duration}")
                 filters.append("asetpts=PTS-STARTPTS")
             
-            # Apply volume if not 1.0
+            # Apply voice effects to voice-tagged tracks FIRST (before normalization)
+            if track_type == 'voice' and voice_filter_chain:
+                filters.append(voice_filter_chain)
+            
+            # Step 1: Normalize track to reference level (-16 LUFS)
+            # This ensures all tracks start at the same perceived loudness
+            if normalize_first:
+                # Use dynaudnorm for realtime normalization (faster than loudnorm which requires 2-pass)
+                # This normalizes the perceived loudness while preserving dynamics
+                filters.append("dynaudnorm=f=150:g=15:p=0.9:m=10")
+            
+            # Step 2: Apply relative volume adjustment
+            # Now the volume parameter represents relative level adjustment from normalized state
             if volume != 1.0:
                 filters.append(f"volume={volume}")
             
@@ -360,10 +390,11 @@ class VideoProcessor:
         if len(mix_labels) == 1:
             return filter_parts[0], mix_labels[0].strip('[]')
         
-        # Mix multiple tracks
+        # Mix multiple tracks with normalize=0 (we already normalized individually)
         output_label = f"amix{input_idx}"
         mix_inputs = "".join(mix_labels)
-        filter_parts.append(f"{mix_inputs}amix=inputs={len(mix_labels)}:duration=first:normalize=0[{output_label}]")
+        # After mixing, apply a limiter to prevent clipping
+        filter_parts.append(f"{mix_inputs}amix=inputs={len(mix_labels)}:duration=first:normalize=0,alimiter=limit=0.98:attack=5:release=50[{output_label}]")
         
         return ";".join(filter_parts), output_label
     
@@ -399,25 +430,141 @@ class VideoProcessor:
             print(f"Error generating waveform: {e}")
             return False
     
+    def analyze_audio_loudness(self, video_path: str, track_index: int = 0, 
+                                duration: float = None) -> Optional[dict]:
+        """
+        Analyze audio loudness using FFmpeg's loudnorm filter (EBU R128).
+        
+        Args:
+            video_path: Path to the video file
+            track_index: Which audio track to analyze
+            duration: Optional duration limit (analyzes first N seconds for speed)
+            
+        Returns:
+            Dict with {loudness_lufs, loudness_range, peak_db} or None on failure
+        """
+        try:
+            # Use ebur128 filter to measure loudness
+            filter_str = f"[0:a:{track_index}]ebur128=peak=true"
+            
+            cmd = [
+                FFMPEG_PATH,
+                "-hide_banner",
+            ]
+            
+            if duration:
+                cmd.extend(["-t", str(duration)])
+            
+            cmd.extend([
+                "-i", video_path,
+                "-filter_complex", filter_str,
+                "-f", "null", "-"
+            ])
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            # Parse the output - ebur128 outputs summary at the end
+            stderr = result.stderr
+            
+            # Look for the summary line
+            # Format: Summary: Integrated: -XX.X LUFS ...
+            loudness_lufs = -23.0  # EBU R128 default
+            loudness_range = 7.0
+            peak_db = -1.0
+            
+            for line in stderr.split('\n'):
+                if 'I:' in line and 'LUFS' in line:
+                    # Parse integrated loudness
+                    try:
+                        # Find the LUFS value
+                        parts = line.split()
+                        for i, p in enumerate(parts):
+                            if p == 'I:':
+                                loudness_lufs = float(parts[i + 1])
+                                break
+                    except (ValueError, IndexError):
+                        pass
+                        
+                if 'LRA:' in line and 'LU' in line:
+                    try:
+                        parts = line.split()
+                        for i, p in enumerate(parts):
+                            if p == 'LRA:':
+                                loudness_range = float(parts[i + 1])
+                                break
+                    except (ValueError, IndexError):
+                        pass
+                        
+                if 'Peak:' in line or 'True peak:' in line.lower():
+                    try:
+                        parts = line.split()
+                        for i, p in enumerate(parts):
+                            if 'peak' in p.lower() and i + 1 < len(parts):
+                                peak_db = float(parts[i + 1])
+                                break
+                    except (ValueError, IndexError):
+                        pass
+            
+            return {
+                "loudness_lufs": loudness_lufs,
+                "loudness_range": loudness_range,
+                "peak_db": peak_db
+            }
+            
+        except Exception as e:
+            print(f"Error analyzing audio loudness: {e}")
+            return None
+    
+    def analyze_all_tracks_loudness(self, video_path: str, duration: float = 30) -> list:
+        """
+        Analyze loudness of all audio tracks in a video.
+        
+        Args:
+            video_path: Path to the video file
+            duration: Duration to analyze (in seconds, for speed)
+            
+        Returns:
+            List of dicts with {track_index, track_name, loudness_lufs, loudness_range, peak_db}
+        """
+        info = self.get_video_info(video_path)
+        if not info or not info.audio_tracks:
+            return []
+        
+        results = []
+        for track in info.audio_tracks:
+            analysis = self.analyze_audio_loudness(video_path, track.track_index, duration)
+            if analysis:
+                track_name = track.title if track.title else f"Track {track.track_index + 1}"
+                results.append({
+                    "track_index": track.track_index,
+                    "track_name": track_name,
+                    **analysis
+                })
+        
+        return results
+    
     def generate_audio_preview(self, video_path: str, output_path: str,
                                audio_mix: list, start_time: float = 0,
-                               duration: float = 15) -> bool:
+                               duration: float = 15,
+                               voice_effects_preset_id: str = None) -> bool:
         """
         Generate a short audio preview with the specified mix settings.
         
         Args:
             video_path: Path to the video file
             output_path: Output audio file path (mp3/aac)
-            audio_mix: List of dicts with {track_index, volume, mute, solo}
+            audio_mix: List of dicts with {track_index, volume, mute, solo, trackType}
             start_time: Start time in seconds
             duration: Preview duration in seconds
+            voice_effects_preset_id: Optional voice effects preset ID to apply to voice tracks
         
         Returns:
             True if successful, False otherwise
         """
         try:
             filter_str, output_label = self._build_audio_mix_filter(
-                0, audio_mix, duration=duration, async_resample=False
+                0, audio_mix, duration=duration, async_resample=False,
+                voice_effects_preset_id=voice_effects_preset_id
             )
             
             cmd = [
@@ -1230,14 +1377,16 @@ class VideoProcessor:
                             subscribe_path: Optional[str] = None,
                             subscribe_interval: float = 300,
                             subscribe_duration: float = 8,
-                            audio_mix_map: dict = None) -> str:
+                            audio_mix_map: dict = None,
+                            voice_effects_preset_id: str = None) -> str:
         """
         Render the full single-video pipeline in one FFmpeg pass.
         
         Args:
             audio_mix_map: Dict mapping video path to audio mix settings.
-                           Each value is a list of {track_index, volume, mute, solo}
+                           Each value is a list of {track_index, volume, mute, solo, trackType}
                            If None or empty for a video, all tracks mixed at 1.0 volume.
+            voice_effects_preset_id: Optional voice effects preset ID to apply to voice-tagged tracks.
         """
         if not video_paths:
             raise ValueError("No video files provided")
@@ -1346,7 +1495,8 @@ class VideoProcessor:
                     # Multi-track mixing with custom levels
                     audio_filter_str, audio_label = self._build_audio_mix_filter(
                         i, audio_mix, duration=duration, 
-                        async_resample=True
+                        async_resample=True,
+                        voice_effects_preset_id=voice_effects_preset_id
                     )
                     # The _build_audio_mix_filter returns a complete filter with output label
                     # But we need to integrate with our naming scheme
@@ -1362,7 +1512,8 @@ class VideoProcessor:
                         default_mix = [{"track_index": t.track_index, "volume": 1.0} for t in info.audio_tracks]
                         audio_filter_str, audio_label = self._build_audio_mix_filter(
                             i, default_mix, duration=duration,
-                            async_resample=True
+                            async_resample=True,
+                            voice_effects_preset_id=voice_effects_preset_id
                         )
                         if audio_label != f"a{i}":
                             audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")

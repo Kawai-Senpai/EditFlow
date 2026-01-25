@@ -14,9 +14,17 @@ const state = {
     selectedPresetId: null,
     // Audio mixer state
     audioMixer: {
-        globalSettings: {}, // Track name -> {volume, mute, solo}
+        globalSettings: {}, // Track name -> {volume, mute, solo, trackType}
         applyToAll: true,   // Apply global settings to all videos
-        previewAudio: null  // Currently playing audio element
+        previewAudio: null, // Currently playing audio element
+        presets: [],        // Available audio mix presets
+        selectedPresetId: null,
+        voiceEffects: {
+            enabled: false,
+            presetId: null,
+            presets: []     // Available voice effects presets
+        },
+        trackTypes: {}      // Available track types from API
     },
     thumbnail: {
         images: [],
@@ -497,21 +505,64 @@ function renderAudioMixerContent() {
             state.audioMixer.globalSettings[trackName] = {
                 volume: 1.0,
                 mute: false,
-                solo: false
+                solo: false,
+                trackType: 'other'
             };
         }
     });
     
-    // Render global controls
-    globalInputs.innerHTML = tracks.map((track, i) => {
+    // Build track type options
+    const trackTypeOptions = Object.entries(state.audioMixer.trackTypes || {})
+        .map(([key, val]) => `<option value="${key}">${val.name}</option>`)
+        .join('');
+    
+    // Build audio preset options
+    const presetOptions = (state.audioMixer.presets || [])
+        .map(p => `<option value="${p.id}" ${state.audioMixer.selectedPresetId === p.id ? 'selected' : ''}>${p.name}</option>`)
+        .join('');
+    
+    // Render preset and auto-level controls
+    globalInputs.innerHTML = `
+        <div class="audio-presets-bar">
+            <div class="audio-preset-select-group">
+                <label>Preset</label>
+                <select id="audio-preset-select" class="form-select form-select-sm">
+                    <option value="">Custom...</option>
+                    ${presetOptions}
+                </select>
+                <button class="btn btn-ghost btn-xs" id="audio-preset-save" title="Save current settings as preset">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                        <polyline points="7 3 7 8 15 8"></polyline>
+                    </svg>
+                </button>
+            </div>
+            <button class="btn btn-outline btn-xs" id="audio-auto-level" title="Auto-level based on track types">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                    <path d="M12 20v-6M6 20V10M18 20V4"></path>
+                </svg>
+                Auto-Level
+            </button>
+        </div>
+    `;
+    
+    // Render global controls with track type selector
+    globalInputs.innerHTML += tracks.map((track, i) => {
         const trackName = getTrackDisplayName(track, i);
-        const settings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false };
+        const settings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false, trackType: 'other' };
         const volumePercent = Math.round(settings.volume * 100);
+        const currentType = settings.trackType || 'other';
         
         return `
             <div class="audio-track-control" data-track="${trackName}">
                 <div class="audio-track-header">
                     <span class="audio-track-name">${trackName}</span>
+                    <select class="audio-track-type-select" data-track="${trackName}" title="Track type for auto-leveling">
+                        ${Object.entries(state.audioMixer.trackTypes || {}).map(([key, val]) => 
+                            `<option value="${key}" ${currentType === key ? 'selected' : ''}>${val.name}</option>`
+                        ).join('')}
+                    </select>
                     <span class="audio-track-info">${track.channels}ch • ${track.codec}</span>
                 </div>
                 <div class="audio-track-controls">
@@ -584,6 +635,55 @@ function renderAudioMixerContent() {
                         Stop
                     </button>
                     <span class="audio-preview-status"></span>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Voice effects section (for voice-tagged tracks) - inline collapsible
+    const hasVoiceTracks = Object.values(state.audioMixer.globalSettings).some(s => s.trackType === 'voice');
+    const voicePresets = state.audioMixer.voiceEffects.presets || [];
+    const voiceEnabled = state.audioMixer.voiceEffects.enabled;
+    const selectedVoicePresetId = state.audioMixer.voiceEffects.presetId;
+    const currentPreset = voicePresets.find(p => p.id === selectedVoicePresetId) || voicePresets[0] || {};
+    
+    // Initialize custom settings from preset if not already set
+    if (!state.audioMixer.voiceEffects.customSettings) {
+        state.audioMixer.voiceEffects.customSettings = JSON.parse(JSON.stringify(currentPreset));
+    }
+    const settings = state.audioMixer.voiceEffects.customSettings;
+    const showSettings = state.audioMixer.voiceEffects.showSettings || false;
+    
+    globalInputs.innerHTML += `
+        <div class="voice-effects-section ${hasVoiceTracks ? '' : 'disabled'}">
+            <div class="voice-effects-header">
+                <label class="toggle voice-effects-toggle">
+                    <input type="checkbox" id="voice-effects-enabled" ${voiceEnabled ? 'checked' : ''} ${!hasVoiceTracks ? 'disabled' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="voice-effects-title">Voice Effects</span>
+                <span class="voice-effects-hint">${hasVoiceTracks ? 'Applied to voice-tagged tracks' : 'Tag a track as "Voice" to enable'}</span>
+            </div>
+            <div class="voice-effects-content ${voiceEnabled && hasVoiceTracks ? '' : 'collapsed'}">
+                <div class="voice-preset-bar">
+                    <select id="voice-effects-preset-select" class="form-select form-select-sm" ${!hasVoiceTracks ? 'disabled' : ''}>
+                        ${voicePresets.map(p => 
+                            `<option value="${p.id}" ${selectedVoicePresetId === p.id ? 'selected' : ''}>${p.name}${p.is_default ? '' : ' ★'}</option>`
+                        ).join('')}
+                    </select>
+                    <button class="btn btn-ghost btn-xs" id="voice-effects-preview" title="Preview voice effects" ${!hasVoiceTracks ? 'disabled' : ''}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                    </button>
+                    <button class="btn btn-ghost btn-xs ${showSettings ? 'active' : ''}" id="voice-effects-toggle-settings" title="Toggle settings">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+                </div>
+                <div class="voice-effects-inline-settings ${showSettings ? '' : 'collapsed'}" id="voice-effects-inline-settings">
+                    ${renderVoiceEffectsInlineSettings(settings)}
                 </div>
             </div>
         </div>
@@ -665,6 +765,99 @@ function initAudioMixerEvents() {
             }
         });
     });
+    
+    // Track type selectors
+    document.querySelectorAll('.audio-track-type-select').forEach(select => {
+        select.addEventListener('change', (e) => {
+            const trackName = e.target.dataset.track;
+            state.audioMixer.globalSettings[trackName].trackType = e.target.value;
+            state.audioMixer.selectedPresetId = null; // Custom settings now
+            updateAudioPresetSelect();
+            updateVoiceEffectsVisibility();
+        });
+    });
+    
+    // Audio preset select
+    const presetSelect = document.getElementById('audio-preset-select');
+    if (presetSelect) {
+        presetSelect.addEventListener('change', (e) => {
+            const presetId = e.target.value;
+            if (presetId) {
+                applyAudioPreset(presetId);
+            }
+            state.audioMixer.selectedPresetId = presetId || null;
+        });
+    }
+    
+    // Save preset button
+    const savePresetBtn = document.getElementById('audio-preset-save');
+    if (savePresetBtn) {
+        savePresetBtn.addEventListener('click', saveCurrentAudioPreset);
+    }
+    
+    // Auto-level button
+    const autoLevelBtn = document.getElementById('audio-auto-level');
+    if (autoLevelBtn) {
+        autoLevelBtn.addEventListener('click', applyAutoLevel);
+    }
+    
+    // Voice effects toggle
+    const voiceEffectsToggle = document.getElementById('voice-effects-enabled');
+    if (voiceEffectsToggle) {
+        voiceEffectsToggle.addEventListener('change', (e) => {
+            state.audioMixer.voiceEffects.enabled = e.target.checked;
+            const content = document.querySelector('.voice-effects-content');
+            if (content) {
+                content.classList.toggle('collapsed', !e.target.checked);
+            }
+        });
+    }
+    
+    // Voice effects preset select
+    const voicePresetSelect = document.getElementById('voice-effects-preset-select');
+    if (voicePresetSelect) {
+        voicePresetSelect.addEventListener('change', (e) => {
+            state.audioMixer.voiceEffects.presetId = e.target.value;
+            // Reset custom settings to new preset
+            const preset = state.audioMixer.voiceEffects.presets.find(p => p.id === e.target.value);
+            if (preset) {
+                state.audioMixer.voiceEffects.customSettings = JSON.parse(JSON.stringify(preset));
+                const settingsContainer = document.getElementById('voice-effects-inline-settings');
+                if (settingsContainer && state.audioMixer.voiceEffects.showSettings) {
+                    settingsContainer.innerHTML = renderVoiceEffectsInlineSettings(state.audioMixer.voiceEffects.customSettings);
+                    initVoiceEffectsInlineEvents();
+                }
+            }
+            updateVoicePresetDescription();
+        });
+    }
+    
+    // Voice effects preview button
+    const voicePreviewBtn = document.getElementById('voice-effects-preview');
+    if (voicePreviewBtn) {
+        voicePreviewBtn.addEventListener('click', previewVoiceEffects);
+    }
+    
+    // Voice effects toggle settings (expand/collapse inline settings)
+    const voiceToggleSettingsBtn = document.getElementById('voice-effects-toggle-settings');
+    if (voiceToggleSettingsBtn) {
+        voiceToggleSettingsBtn.addEventListener('click', () => {
+            state.audioMixer.voiceEffects.showSettings = !state.audioMixer.voiceEffects.showSettings;
+            const inlineSettings = document.getElementById('voice-effects-inline-settings');
+            if (inlineSettings) {
+                inlineSettings.classList.toggle('collapsed', !state.audioMixer.voiceEffects.showSettings);
+                if (state.audioMixer.voiceEffects.showSettings) {
+                    initVoiceEffectsInlineEvents();
+                }
+            }
+            voiceToggleSettingsBtn.classList.toggle('active', state.audioMixer.voiceEffects.showSettings);
+        });
+    }
+    
+    // Initialize inline voice effects events if settings are visible
+    if (state.audioMixer.voiceEffects.showSettings) {
+        initVoiceEffectsInlineEvents();
+    }
     
     // Per-file volume sliders
     document.querySelectorAll('.audio-volume-input-file').forEach(slider => {
@@ -780,13 +973,14 @@ function applyGlobalAudioMix() {
         
         file.audio_mix = file.audio_tracks.map((track, i) => {
             const trackName = getTrackDisplayName(track, i);
-            const globalSettings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false };
+            const globalSettings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false, trackType: 'other' };
             
             return {
                 track_index: i,
                 volume: globalSettings.volume,
                 mute: globalSettings.mute,
-                solo: globalSettings.solo
+                solo: globalSettings.solo,
+                trackType: globalSettings.trackType || 'other'
             };
         });
     });
@@ -839,7 +1033,8 @@ async function previewAudioMix() {
                 path: file.path,
                 audio_mix: audioMix,
                 start_time: startTime,
-                duration: duration
+                duration: duration,
+                voice_effects_preset_id: getVoiceEffectsPresetId()
             })
         });
         
@@ -905,6 +1100,1140 @@ function getAudioMixSettings() {
             path: f.path,
             tracks: f.audio_mix
         }));
+}
+
+/**
+ * Load audio presets and track types from API
+ */
+async function loadAudioPresetsAndTypes() {
+    try {
+        const [presetsRes, typesRes, voicePresetsRes] = await Promise.all([
+            fetch('/api/audio-presets'),
+            fetch('/api/audio/track-types'),
+            fetch('/api/voice-effects/presets')
+        ]);
+        
+        if (presetsRes.ok) {
+            state.audioMixer.presets = await presetsRes.json();
+        }
+        if (typesRes.ok) {
+            state.audioMixer.trackTypes = await typesRes.json();
+        }
+        if (voicePresetsRes.ok) {
+            state.audioMixer.voiceEffects.presets = await voicePresetsRes.json();
+            // Default to first preset
+            if (state.audioMixer.voiceEffects.presets.length > 0 && !state.audioMixer.voiceEffects.presetId) {
+                state.audioMixer.voiceEffects.presetId = state.audioMixer.voiceEffects.presets[0].id;
+            }
+        }
+    } catch (err) {
+        console.error('Failed to load audio presets:', err);
+    }
+}
+
+/**
+ * Apply an audio preset to current settings
+ */
+async function applyAudioPreset(presetId) {
+    const preset = state.audioMixer.presets.find(p => p.id === presetId);
+    if (!preset) return;
+    
+    // Apply track settings from preset
+    const presetTracks = preset.tracks || {};
+    
+    for (const [trackName, settings] of Object.entries(presetTracks)) {
+        if (state.audioMixer.globalSettings[trackName]) {
+            state.audioMixer.globalSettings[trackName] = {
+                ...state.audioMixer.globalSettings[trackName],
+                volume: settings.volume ?? 1.0,
+                mute: settings.mute ?? false,
+                solo: settings.solo ?? false,
+                trackType: settings.trackType ?? 'other'
+            };
+        }
+    }
+    
+    // Apply voice effects settings
+    if (preset.voiceEffects) {
+        state.audioMixer.voiceEffects.enabled = preset.voiceEffects.enabled ?? false;
+        state.audioMixer.voiceEffects.presetId = preset.voiceEffects.presetId ?? null;
+    }
+    
+    // Update UI
+    if (state.audioMixer.applyToAll) {
+        applyGlobalAudioMix();
+    }
+    renderAudioMixerContent();
+}
+
+/**
+ * Save current audio settings as a new preset
+ */
+async function saveCurrentAudioPreset() {
+    const name = prompt('Enter preset name:');
+    if (!name || !name.trim()) return;
+    
+    const tracks = {};
+    for (const [trackName, settings] of Object.entries(state.audioMixer.globalSettings)) {
+        tracks[trackName] = {
+            volume: settings.volume,
+            mute: settings.mute,
+            solo: settings.solo,
+            trackType: settings.trackType
+        };
+    }
+    
+    try {
+        const response = await fetch('/api/audio-presets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: name.trim(),
+                tracks,
+                voiceEffects: {
+                    enabled: state.audioMixer.voiceEffects.enabled,
+                    presetId: state.audioMixer.voiceEffects.presetId
+                }
+            })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Failed to save preset');
+        }
+        
+        const newPreset = await response.json();
+        state.audioMixer.presets.push(newPreset);
+        state.audioMixer.selectedPresetId = newPreset.id;
+        renderAudioMixerContent();
+        showToast('Audio preset saved!', 'success');
+    } catch (err) {
+        showToast(`Failed to save preset: ${err.message}`, 'error');
+    }
+}
+
+/**
+ * Apply auto-level based on LUFS analysis and track types
+ */
+async function applyAutoLevel() {
+    const trackTypes = {};
+    for (const [trackName, settings] of Object.entries(state.audioMixer.globalSettings)) {
+        trackTypes[trackName] = settings.trackType || 'other';
+    }
+    
+    // Get first multi-track file for analysis
+    const multiTrackFiles = state.files.filter(f => f.audio_tracks?.length > 1);
+    const videoPath = multiTrackFiles.length > 0 ? multiTrackFiles[0].path : null;
+    
+    const autoLevelBtn = document.getElementById('audio-auto-level');
+    if (autoLevelBtn) {
+        autoLevelBtn.disabled = true;
+        autoLevelBtn.innerHTML = `
+            <svg class="animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+            </svg>
+            Analyzing...
+        `;
+    }
+    
+    try {
+        const response = await fetch('/api/audio/auto-level', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                track_types: trackTypes,
+                video_path: videoPath
+            })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Auto-level failed');
+        }
+        
+        const result = await response.json();
+        const { levels, analyzed, analysis } = result;
+        
+        // Apply the calculated levels
+        for (const [trackName, volume] of Object.entries(levels)) {
+            if (state.audioMixer.globalSettings[trackName]) {
+                state.audioMixer.globalSettings[trackName].volume = volume;
+            }
+        }
+        
+        state.audioMixer.selectedPresetId = null; // Custom settings now
+        
+        if (state.audioMixer.applyToAll) {
+            applyGlobalAudioMix();
+        }
+        renderAudioMixerContent();
+        
+        if (analyzed && analysis) {
+            // Show detailed analysis in toast
+            const analysisText = analysis.map(t => 
+                `${t.track_name}: ${t.loudness_lufs.toFixed(1)} LUFS`
+            ).join(', ');
+            showToast(`Levels set based on LUFS analysis (${analysisText})`, 'success');
+        } else {
+            showToast('Levels set based on track types (no analysis available)', 'info');
+        }
+    } catch (err) {
+        showToast(`Auto-level failed: ${err.message}`, 'error');
+    } finally {
+        if (autoLevelBtn) {
+            autoLevelBtn.disabled = false;
+            autoLevelBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                    <path d="M12 20v-6M6 20V10M18 20V4"></path>
+                </svg>
+                Auto-Level
+            `;
+        }
+    }
+}
+
+/**
+ * Update the audio preset select dropdown
+ */
+function updateAudioPresetSelect() {
+    const select = document.getElementById('audio-preset-select');
+    if (select) {
+        select.value = state.audioMixer.selectedPresetId || '';
+    }
+}
+
+/**
+ * Render inline voice effects settings (collapsible)
+ */
+function renderVoiceEffectsInlineSettings(settings) {
+    if (!settings) return '<div class="voice-effects-empty">Select a preset first</div>';
+    
+    // Check if current preset is a custom preset (can be edited/deleted)
+    const currentPresetId = state.audioMixer.voiceEffects.presetId;
+    const currentPreset = state.audioMixer.voiceEffects.presets.find(p => p.id === currentPresetId);
+    const isCustomPreset = currentPreset && !currentPreset.is_default;
+    
+    return `
+        <div class="voice-effects-grid">
+            <!-- Noise Reduction -->
+            <div class="ve-card ${settings.noise_reduction?.enabled ? '' : 'off'}">
+                <div class="ve-card-header">
+                    <label class="ve-toggle">
+                        <input type="checkbox" data-effect="noise_reduction" data-field="enabled" 
+                               ${settings.noise_reduction?.enabled ? 'checked' : ''}>
+                        <span class="ve-toggle-label">Noise Reduction</span>
+                    </label>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">Strength</span>
+                        <input type="range" class="ve-slider" data-effect="noise_reduction" data-field="nr" 
+                               min="0" max="30" value="${settings.noise_reduction?.nr || 12}">
+                        <span class="ve-value">${settings.noise_reduction?.nr || 12}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- De-esser -->
+            <div class="ve-card ${settings.deesser?.enabled ? '' : 'off'}">
+                <div class="ve-card-header">
+                    <label class="ve-toggle">
+                        <input type="checkbox" data-effect="deesser" data-field="enabled" 
+                               ${settings.deesser?.enabled ? 'checked' : ''}>
+                        <span class="ve-toggle-label">De-esser</span>
+                    </label>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">Intensity</span>
+                        <input type="range" class="ve-slider" data-effect="deesser" data-field="i" 
+                               min="0" max="100" value="${Math.round((settings.deesser?.i || 0.25) * 100)}">
+                        <span class="ve-value">${Math.round((settings.deesser?.i || 0.25) * 100)}%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Compressor -->
+            <div class="ve-card ${settings.compressor?.enabled ? '' : 'off'}">
+                <div class="ve-card-header">
+                    <label class="ve-toggle">
+                        <input type="checkbox" data-effect="compressor" data-field="enabled" 
+                               ${settings.compressor?.enabled ? 'checked' : ''}>
+                        <span class="ve-toggle-label">Compressor</span>
+                    </label>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">Ratio</span>
+                        <input type="range" class="ve-slider" data-effect="compressor" data-field="ratio" 
+                               min="1" max="10" step="0.5" value="${settings.compressor?.ratio || 3}">
+                        <span class="ve-value">${settings.compressor?.ratio || 3}:1</span>
+                    </div>
+                    <div class="ve-row">
+                        <span class="ve-label">Makeup</span>
+                        <input type="range" class="ve-slider" data-effect="compressor" data-field="makeup" 
+                               min="1" max="4" step="0.1" value="${settings.compressor?.makeup || 1.5}">
+                        <span class="ve-value">${settings.compressor?.makeup || 1.5}x</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Leveling -->
+            <div class="ve-card ${settings.leveling?.enabled ? '' : 'off'}">
+                <div class="ve-card-header">
+                    <label class="ve-toggle">
+                        <input type="checkbox" data-effect="leveling" data-field="enabled" 
+                               ${settings.leveling?.enabled ? 'checked' : ''}>
+                        <span class="ve-toggle-label">Dynamic Level</span>
+                    </label>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">Peak</span>
+                        <input type="range" class="ve-slider" data-effect="leveling" data-field="peak" 
+                               min="50" max="100" value="${Math.round((settings.leveling?.peak || 0.95) * 100)}">
+                        <span class="ve-value">${Math.round((settings.leveling?.peak || 0.95) * 100)}%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Limiter -->
+            <div class="ve-card ${settings.limiter?.enabled ? '' : 'off'}">
+                <div class="ve-card-header">
+                    <label class="ve-toggle">
+                        <input type="checkbox" data-effect="limiter" data-field="enabled" 
+                               ${settings.limiter?.enabled ? 'checked' : ''}>
+                        <span class="ve-toggle-label">Limiter</span>
+                    </label>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">Limit</span>
+                        <input type="range" class="ve-slider" data-effect="limiter" data-field="limit" 
+                               min="80" max="100" value="${Math.round((settings.limiter?.limit || 0.98) * 100)}">
+                        <span class="ve-value">${Math.round((settings.limiter?.limit || 0.98) * 100)}%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Voice Deepening -->
+            <div class="ve-card ${settings.deepening?.enabled ? '' : 'off'}">
+                <div class="ve-card-header">
+                    <label class="ve-toggle">
+                        <input type="checkbox" data-effect="deepening" data-field="enabled" 
+                               ${settings.deepening?.enabled ? 'checked' : ''}>
+                        <span class="ve-toggle-label">Deepening</span>
+                    </label>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">Semitones</span>
+                        <input type="range" class="ve-slider" data-effect="deepening" data-field="semitones" 
+                               min="-6" max="0" step="0.5" value="${settings.deepening?.semitones || -2}">
+                        <span class="ve-value">${settings.deepening?.semitones || -2}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Loudnorm -->
+            <div class="ve-card ${settings.loudnorm?.enabled ? '' : 'off'}">
+                <div class="ve-card-header">
+                    <label class="ve-toggle">
+                        <input type="checkbox" data-effect="loudnorm" data-field="enabled" 
+                               ${settings.loudnorm?.enabled ? 'checked' : ''}>
+                        <span class="ve-toggle-label">Loudness Norm</span>
+                    </label>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">Target</span>
+                        <input type="range" class="ve-slider" data-effect="loudnorm" data-field="I" 
+                               min="-24" max="-10" value="${settings.loudnorm?.I || -16}">
+                        <span class="ve-value">${settings.loudnorm?.I || -16} LUFS</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Frequency -->
+            <div class="ve-card">
+                <div class="ve-card-header">
+                    <span class="ve-toggle-label">Frequency Cutoff</span>
+                </div>
+                <div class="ve-card-body">
+                    <div class="ve-row">
+                        <span class="ve-label">HP</span>
+                        <input type="range" class="ve-slider" data-effect="root" data-field="highpass_hz" 
+                               min="20" max="200" value="${settings.highpass_hz || 80}">
+                        <span class="ve-value">${settings.highpass_hz || 80}Hz</span>
+                    </div>
+                    <div class="ve-row">
+                        <span class="ve-label">LP</span>
+                        <input type="range" class="ve-slider" data-effect="root" data-field="lowpass_hz" 
+                               min="8000" max="20000" value="${settings.lowpass_hz || 16000}">
+                        <span class="ve-value">${Math.round((settings.lowpass_hz || 16000) / 1000)}kHz</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="ve-actions">
+            <button class="btn btn-ghost btn-xs" id="ve-reset-preset">Reset</button>
+            ${isCustomPreset ? `
+                <button class="btn btn-ghost btn-xs ve-danger" id="ve-delete-preset" title="Delete this preset">🗑️</button>
+                <button class="btn btn-outline btn-xs" id="ve-update-preset">Update Preset</button>
+            ` : ''}
+            <button class="btn btn-outline btn-xs" id="ve-save-preset">Save as New</button>
+        </div>
+    `;
+}
+
+/**
+ * Initialize inline voice effects events
+ */
+function initVoiceEffectsInlineEvents() {
+    const container = document.getElementById('voice-effects-inline-settings');
+    if (!container) return;
+    
+    const settings = state.audioMixer.voiceEffects.customSettings;
+    if (!settings) return;
+    
+    // Toggle checkboxes
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+            const effect = e.target.dataset.effect;
+            const field = e.target.dataset.field;
+            if (settings[effect]) {
+                settings[effect][field] = e.target.checked;
+            }
+            // Update card styling
+            const card = e.target.closest('.ve-card');
+            if (card) card.classList.toggle('off', !e.target.checked);
+        });
+    });
+    
+    // Sliders
+    container.querySelectorAll('.ve-slider').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const effect = e.target.dataset.effect;
+            const field = e.target.dataset.field;
+            let value = parseFloat(e.target.value);
+            
+            // Handle percentage fields
+            if (['i', 'peak', 'limit'].includes(field)) {
+                value = value / 100;
+            }
+            
+            if (effect === 'root') {
+                settings[field] = field === 'lowpass_hz' ? parseInt(e.target.value) : parseInt(e.target.value);
+            } else if (settings[effect]) {
+                settings[effect][field] = value;
+            }
+            
+            // Update display value
+            const valueEl = e.target.nextElementSibling;
+            if (valueEl) {
+                if (['i', 'peak', 'limit'].includes(field)) {
+                    valueEl.textContent = `${e.target.value}%`;
+                } else if (field === 'ratio') {
+                    valueEl.textContent = `${e.target.value}:1`;
+                } else if (field === 'makeup') {
+                    valueEl.textContent = `${e.target.value}x`;
+                } else if (field === 'I') {
+                    valueEl.textContent = `${e.target.value} LUFS`;
+                } else if (field === 'highpass_hz') {
+                    valueEl.textContent = `${e.target.value}Hz`;
+                } else if (field === 'lowpass_hz') {
+                    valueEl.textContent = `${Math.round(e.target.value / 1000)}kHz`;
+                } else {
+                    valueEl.textContent = e.target.value;
+                }
+            }
+        });
+    });
+    
+    // Reset button
+    const resetBtn = document.getElementById('ve-reset-preset');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            const preset = state.audioMixer.voiceEffects.presets.find(p => p.id === state.audioMixer.voiceEffects.presetId);
+            if (preset) {
+                state.audioMixer.voiceEffects.customSettings = JSON.parse(JSON.stringify(preset));
+                const settingsContainer = document.getElementById('voice-effects-inline-settings');
+                if (settingsContainer) {
+                    settingsContainer.innerHTML = renderVoiceEffectsInlineSettings(state.audioMixer.voiceEffects.customSettings);
+                    initVoiceEffectsInlineEvents();
+                }
+                showToast('Reset to preset defaults', 'info');
+            }
+        });
+    }
+    
+    // Save as preset button
+    const saveBtn = document.getElementById('ve-save-preset');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            const name = prompt('Enter preset name:');
+            if (!name?.trim()) return;
+            
+            try {
+                const response = await fetch('/api/voice-effects/presets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name.trim(),
+                        description: 'Custom preset',
+                        settings: settings
+                    })
+                });
+                
+                if (!response.ok) throw new Error('Failed to save');
+                
+                const newPreset = await response.json();
+                state.audioMixer.voiceEffects.presets.push(newPreset);
+                state.audioMixer.voiceEffects.presetId = newPreset.id;
+                state.audioMixer.voiceEffects.customSettings = JSON.parse(JSON.stringify(newPreset));
+                renderAudioMixerContent();
+                showToast('Preset saved!', 'success');
+            } catch (err) {
+                showToast('Failed to save preset', 'error');
+            }
+        });
+    }
+    
+    // Update preset button (for custom presets)
+    const updateBtn = document.getElementById('ve-update-preset');
+    if (updateBtn) {
+        updateBtn.addEventListener('click', async () => {
+            const presetId = state.audioMixer.voiceEffects.presetId;
+            
+            try {
+                const response = await fetch(`/api/voice-effects/presets/${presetId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                
+                if (!response.ok) throw new Error('Failed to update');
+                
+                const updatedPreset = await response.json();
+                // Update in local state
+                const idx = state.audioMixer.voiceEffects.presets.findIndex(p => p.id === presetId);
+                if (idx >= 0) {
+                    state.audioMixer.voiceEffects.presets[idx] = updatedPreset;
+                }
+                showToast('Preset updated!', 'success');
+            } catch (err) {
+                showToast('Failed to update preset', 'error');
+            }
+        });
+    }
+    
+    // Delete preset button (for custom presets)
+    const deleteBtn = document.getElementById('ve-delete-preset');
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', async () => {
+            const presetId = state.audioMixer.voiceEffects.presetId;
+            const preset = state.audioMixer.voiceEffects.presets.find(p => p.id === presetId);
+            
+            if (!confirm(`Delete preset "${preset?.name}"?`)) return;
+            
+            try {
+                const response = await fetch(`/api/voice-effects/presets/${presetId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!response.ok) throw new Error('Failed to delete');
+                
+                // Remove from local state
+                state.audioMixer.voiceEffects.presets = state.audioMixer.voiceEffects.presets.filter(p => p.id !== presetId);
+                // Select first available preset
+                const firstPreset = state.audioMixer.voiceEffects.presets[0];
+                state.audioMixer.voiceEffects.presetId = firstPreset?.id || '';
+                state.audioMixer.voiceEffects.customSettings = firstPreset ? JSON.parse(JSON.stringify(firstPreset)) : null;
+                renderAudioMixerContent();
+                showToast('Preset deleted!', 'success');
+            } catch (err) {
+                showToast('Cannot delete default preset', 'error');
+            }
+        });
+    }
+}
+
+/**
+ * Update voice effects section visibility based on voice tracks
+ */
+function updateVoiceEffectsVisibility() {
+    const hasVoiceTracks = Object.values(state.audioMixer.globalSettings).some(s => s.trackType === 'voice');
+    const section = document.querySelector('.voice-effects-section');
+    const toggle = document.getElementById('voice-effects-enabled');
+    const select = document.getElementById('voice-effects-preset-select');
+    const previewBtn = document.getElementById('voice-effects-preview');
+    
+    if (section) {
+        section.classList.toggle('disabled', !hasVoiceTracks);
+    }
+    if (toggle) {
+        toggle.disabled = !hasVoiceTracks;
+    }
+    if (select) {
+        select.disabled = !hasVoiceTracks;
+    }
+    if (previewBtn) {
+        previewBtn.disabled = !hasVoiceTracks;
+    }
+    
+    // Update hint text
+    const hint = document.querySelector('.voice-effects-hint');
+    if (hint) {
+        hint.textContent = hasVoiceTracks ? 'Applied to voice-tagged tracks' : 'Tag a track as "Voice" to enable';
+    }
+}
+
+/**
+ * Update voice preset description
+ */
+function updateVoicePresetDescription() {
+    const descEl = document.getElementById('voice-preset-description');
+    if (!descEl) return;
+    
+    const preset = state.audioMixer.voiceEffects.presets.find(p => p.id === state.audioMixer.voiceEffects.presetId);
+    descEl.textContent = preset?.description || '';
+}
+
+/**
+ * Preview voice effects on ALL voice-tagged tracks mixed together
+ */
+async function previewVoiceEffects() {
+    const multiTrackFiles = state.files.filter(f => f.audio_tracks?.length > 1);
+    if (multiTrackFiles.length === 0) {
+        showToast('No multi-track files available', 'error');
+        return;
+    }
+    
+    const file = multiTrackFiles[0];
+    
+    // Find ALL voice-tagged track indices
+    const voiceTrackIndices = [];
+    for (const [trackName, settings] of Object.entries(state.audioMixer.globalSettings)) {
+        if (settings.trackType === 'voice') {
+            // Find the track index for this track name
+            const tracks = file.audio_tracks || [];
+            for (let i = 0; i < tracks.length; i++) {
+                if (getTrackDisplayName(tracks[i], i) === trackName) {
+                    voiceTrackIndices.push(i);
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (voiceTrackIndices.length === 0) {
+        showToast('No voice-tagged tracks found', 'error');
+        return;
+    }
+    
+    const previewBtn = document.getElementById('voice-effects-preview');
+    if (previewBtn) previewBtn.disabled = true;
+    
+    const startTime = state.audioMixer.previewStart ?? 0;
+    const duration = state.audioMixer.previewDuration ?? 15;
+    
+    try {
+        const response = await fetch('/api/voice-effects/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                path: file.path,
+                preset_id: state.audioMixer.voiceEffects.presetId,
+                voice_track_indices: voiceTrackIndices,
+                start_time: startTime,
+                duration: duration
+            })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Preview failed');
+        }
+        
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        
+        // Stop any existing preview
+        stopAudioPreview();
+        
+        const audio = new Audio(url);
+        state.audioMixer.previewAudio = audio;
+        
+        audio.onended = () => {
+            if (previewBtn) previewBtn.disabled = false;
+            state.audioMixer.previewAudio = null;
+        };
+        
+        audio.play();
+        const trackCount = voiceTrackIndices.length;
+        showToast(`Playing voice effects on ${trackCount} voice track${trackCount > 1 ? 's' : ''}...`, 'info');
+        
+    } catch (err) {
+        showToast(`Voice preview failed: ${err.message}`, 'error');
+    } finally {
+        if (previewBtn) previewBtn.disabled = false;
+    }
+}
+
+/**
+ * Get voice effects preset ID for API calls
+ */
+function getVoiceEffectsPresetId() {
+    if (state.audioMixer.voiceEffects.enabled && state.audioMixer.voiceEffects.presetId) {
+        return state.audioMixer.voiceEffects.presetId;
+    }
+    return null;
+}
+
+/**
+ * Open voice effects editor modal
+ */
+function openVoiceEffectsEditor() {
+    const modal = document.getElementById('voice-effects-modal');
+    if (!modal) return;
+    
+    // Get current preset settings
+    const presetId = state.audioMixer.voiceEffects.presetId;
+    const preset = state.audioMixer.voiceEffects.presets.find(p => p.id === presetId);
+    
+    if (!preset) {
+        showToast('No voice effects preset selected', 'error');
+        return;
+    }
+    
+    // Store a copy for editing
+    state.audioMixer.voiceEffects.editingPreset = JSON.parse(JSON.stringify(preset));
+    
+    renderVoiceEffectsEditor();
+    modal.classList.add('active');
+    
+    // Set up event listeners
+    document.getElementById('voice-effects-modal-close')?.addEventListener('click', closeVoiceEffectsEditor);
+    document.getElementById('voice-effects-reset')?.addEventListener('click', resetVoiceEffectsEditor);
+    document.getElementById('voice-effects-apply')?.addEventListener('click', applyVoiceEffectsChanges);
+    document.getElementById('voice-effects-save-preset')?.addEventListener('click', saveVoiceEffectsAsPreset);
+}
+
+/**
+ * Close voice effects editor modal
+ */
+function closeVoiceEffectsEditor() {
+    const modal = document.getElementById('voice-effects-modal');
+    if (modal) modal.classList.remove('active');
+    state.audioMixer.voiceEffects.editingPreset = null;
+}
+
+/**
+ * Render voice effects editor content
+ */
+function renderVoiceEffectsEditor() {
+    const editor = document.getElementById('voice-effects-editor');
+    if (!editor) return;
+    
+    const preset = state.audioMixer.voiceEffects.editingPreset;
+    if (!preset) return;
+    
+    editor.innerHTML = `
+        <div class="voice-effect-preset-info">
+            <div class="voice-effect-preset-name">${preset.name}</div>
+            <div class="voice-effect-preset-desc">${preset.description || 'No description'}</div>
+        </div>
+        
+        <div class="voice-effects-editor-grid">
+            <!-- Highpass/Lowpass -->
+            <div class="voice-effect-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                        </svg>
+                        Frequency Cutoff
+                    </span>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Highpass</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-highpass" min="20" max="200" value="${preset.highpass_hz || 80}">
+                        <span class="voice-effect-param-value" id="ve-highpass-val">${preset.highpass_hz || 80} Hz</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Lowpass</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-lowpass" min="8000" max="20000" value="${preset.lowpass_hz || 16000}">
+                        <span class="voice-effect-param-value" id="ve-lowpass-val">${preset.lowpass_hz || 16000} Hz</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Noise Reduction -->
+            <div class="voice-effect-card ${preset.noise_reduction?.enabled ? '' : 'disabled'}" id="ve-nr-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+                            <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+                        </svg>
+                        Noise Reduction
+                    </span>
+                    <label class="toggle voice-effect-toggle">
+                        <input type="checkbox" id="ve-nr-enabled" ${preset.noise_reduction?.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Strength</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-nr-strength" min="0" max="30" value="${preset.noise_reduction?.nr || 12}">
+                        <span class="voice-effect-param-value" id="ve-nr-strength-val">${preset.noise_reduction?.nr || 12}</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Floor</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-nr-floor" min="-80" max="-20" value="${preset.noise_reduction?.nf || -50}">
+                        <span class="voice-effect-param-value" id="ve-nr-floor-val">${preset.noise_reduction?.nf || -50} dB</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- De-esser -->
+            <div class="voice-effect-card ${preset.deesser?.enabled ? '' : 'disabled'}" id="ve-deesser-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                        </svg>
+                        De-esser
+                    </span>
+                    <label class="toggle voice-effect-toggle">
+                        <input type="checkbox" id="ve-deesser-enabled" ${preset.deesser?.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Intensity</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-deesser-i" min="0" max="1" step="0.05" value="${preset.deesser?.i || 0.25}">
+                        <span class="voice-effect-param-value" id="ve-deesser-i-val">${((preset.deesser?.i || 0.25) * 100).toFixed(0)}%</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Frequency</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-deesser-f" min="0.3" max="0.9" step="0.05" value="${preset.deesser?.f || 0.6}">
+                        <span class="voice-effect-param-value" id="ve-deesser-f-val">${((preset.deesser?.f || 0.6) * 100).toFixed(0)}%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Compressor -->
+            <div class="voice-effect-card ${preset.compressor?.enabled ? '' : 'disabled'}" id="ve-comp-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+                            <line x1="9" y1="4" x2="9" y2="20"></line>
+                            <line x1="15" y1="4" x2="15" y2="20"></line>
+                        </svg>
+                        Compressor
+                    </span>
+                    <label class="toggle voice-effect-toggle">
+                        <input type="checkbox" id="ve-comp-enabled" ${preset.compressor?.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Threshold</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-comp-threshold" min="0.01" max="0.5" step="0.01" value="${preset.compressor?.threshold || 0.1}">
+                        <span class="voice-effect-param-value" id="ve-comp-threshold-val">${preset.compressor?.threshold || 0.1}</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Ratio</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-comp-ratio" min="1" max="10" step="0.5" value="${preset.compressor?.ratio || 3}">
+                        <span class="voice-effect-param-value" id="ve-comp-ratio-val">${preset.compressor?.ratio || 3}:1</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Attack</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-comp-attack" min="1" max="100" value="${preset.compressor?.attack_ms || 20}">
+                        <span class="voice-effect-param-value" id="ve-comp-attack-val">${preset.compressor?.attack_ms || 20} ms</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Makeup</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-comp-makeup" min="1" max="4" step="0.1" value="${preset.compressor?.makeup || 1.5}">
+                        <span class="voice-effect-param-value" id="ve-comp-makeup-val">${preset.compressor?.makeup || 1.5}x</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Leveling -->
+            <div class="voice-effect-card ${preset.leveling?.enabled ? '' : 'disabled'}" id="ve-level-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 20v-6M6 20V10M18 20V4"></path>
+                        </svg>
+                        Dynamic Leveling
+                    </span>
+                    <label class="toggle voice-effect-toggle">
+                        <input type="checkbox" id="ve-level-enabled" ${preset.leveling?.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Peak</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-level-peak" min="0.5" max="1" step="0.01" value="${preset.leveling?.peak || 0.95}">
+                        <span class="voice-effect-param-value" id="ve-level-peak-val">${((preset.leveling?.peak || 0.95) * 100).toFixed(0)}%</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Compress</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-level-compress" min="1" max="15" step="0.5" value="${preset.leveling?.compress || 5}">
+                        <span class="voice-effect-param-value" id="ve-level-compress-val">${preset.leveling?.compress || 5}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Limiter -->
+            <div class="voice-effect-card ${preset.limiter?.enabled ? '' : 'disabled'}" id="ve-limiter-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                        </svg>
+                        Limiter
+                    </span>
+                    <label class="toggle voice-effect-toggle">
+                        <input type="checkbox" id="ve-limiter-enabled" ${preset.limiter?.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Limit</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-limiter-limit" min="0.8" max="1" step="0.01" value="${preset.limiter?.limit || 0.98}">
+                        <span class="voice-effect-param-value" id="ve-limiter-limit-val">${((preset.limiter?.limit || 0.98) * 100).toFixed(0)}%</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Attack</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-limiter-attack" min="1" max="20" value="${preset.limiter?.attack || 5}">
+                        <span class="voice-effect-param-value" id="ve-limiter-attack-val">${preset.limiter?.attack || 5} ms</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Voice Deepening -->
+            <div class="voice-effect-card ${preset.deepening?.enabled ? '' : 'disabled'}" id="ve-deep-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        </svg>
+                        Voice Deepening
+                    </span>
+                    <label class="toggle voice-effect-toggle">
+                        <input type="checkbox" id="ve-deep-enabled" ${preset.deepening?.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Semitones</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-deep-semitones" min="-6" max="0" step="0.5" value="${preset.deepening?.semitones || -2}">
+                        <span class="voice-effect-param-value" id="ve-deep-semitones-val">${preset.deepening?.semitones || -2}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Loudness Normalization -->
+            <div class="voice-effect-card ${preset.loudnorm?.enabled ? '' : 'disabled'}" id="ve-loudnorm-card">
+                <div class="voice-effect-card-header">
+                    <span class="voice-effect-card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                        </svg>
+                        Loudness Norm
+                    </span>
+                    <label class="toggle voice-effect-toggle">
+                        <input type="checkbox" id="ve-loudnorm-enabled" ${preset.loudnorm?.enabled ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="voice-effect-params">
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">Target LUFS</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-loudnorm-i" min="-24" max="-10" value="${preset.loudnorm?.I || -16}">
+                        <span class="voice-effect-param-value" id="ve-loudnorm-i-val">${preset.loudnorm?.I || -16} LUFS</span>
+                    </div>
+                    <div class="voice-effect-param">
+                        <span class="voice-effect-param-label">True Peak</span>
+                        <input type="range" class="voice-effect-param-slider" 
+                               id="ve-loudnorm-tp" min="-4" max="0" step="0.5" value="${preset.loudnorm?.TP || -1.5}">
+                        <span class="voice-effect-param-value" id="ve-loudnorm-tp-val">${preset.loudnorm?.TP || -1.5} dB</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Attach event listeners to all sliders and toggles
+    initVoiceEffectsEditorEvents();
+}
+
+/**
+ * Initialize voice effects editor event listeners
+ */
+function initVoiceEffectsEditorEvents() {
+    const preset = state.audioMixer.voiceEffects.editingPreset;
+    if (!preset) return;
+    
+    // Highpass/Lowpass
+    bindSlider('ve-highpass', 'Hz', v => preset.highpass_hz = parseInt(v));
+    bindSlider('ve-lowpass', 'Hz', v => preset.lowpass_hz = parseInt(v));
+    
+    // Noise Reduction
+    bindToggle('ve-nr-enabled', 've-nr-card', v => preset.noise_reduction.enabled = v);
+    bindSlider('ve-nr-strength', '', v => preset.noise_reduction.nr = parseInt(v));
+    bindSlider('ve-nr-floor', 'dB', v => preset.noise_reduction.nf = parseInt(v));
+    
+    // De-esser
+    bindToggle('ve-deesser-enabled', 've-deesser-card', v => preset.deesser.enabled = v);
+    bindSlider('ve-deesser-i', '%', v => preset.deesser.i = parseFloat(v), v => (v * 100).toFixed(0));
+    bindSlider('ve-deesser-f', '%', v => preset.deesser.f = parseFloat(v), v => (v * 100).toFixed(0));
+    
+    // Compressor
+    bindToggle('ve-comp-enabled', 've-comp-card', v => preset.compressor.enabled = v);
+    bindSlider('ve-comp-threshold', '', v => preset.compressor.threshold = parseFloat(v));
+    bindSlider('ve-comp-ratio', ':1', v => preset.compressor.ratio = parseFloat(v));
+    bindSlider('ve-comp-attack', 'ms', v => preset.compressor.attack_ms = parseInt(v));
+    bindSlider('ve-comp-makeup', 'x', v => preset.compressor.makeup = parseFloat(v));
+    
+    // Leveling
+    bindToggle('ve-level-enabled', 've-level-card', v => preset.leveling.enabled = v);
+    bindSlider('ve-level-peak', '%', v => preset.leveling.peak = parseFloat(v), v => (v * 100).toFixed(0));
+    bindSlider('ve-level-compress', '', v => preset.leveling.compress = parseFloat(v));
+    
+    // Limiter
+    bindToggle('ve-limiter-enabled', 've-limiter-card', v => preset.limiter.enabled = v);
+    bindSlider('ve-limiter-limit', '%', v => preset.limiter.limit = parseFloat(v), v => (v * 100).toFixed(0));
+    bindSlider('ve-limiter-attack', 'ms', v => preset.limiter.attack = parseInt(v));
+    
+    // Deepening
+    bindToggle('ve-deep-enabled', 've-deep-card', v => preset.deepening.enabled = v);
+    bindSlider('ve-deep-semitones', '', v => preset.deepening.semitones = parseFloat(v));
+    
+    // Loudnorm
+    bindToggle('ve-loudnorm-enabled', 've-loudnorm-card', v => preset.loudnorm.enabled = v);
+    bindSlider('ve-loudnorm-i', 'LUFS', v => preset.loudnorm.I = parseInt(v));
+    bindSlider('ve-loudnorm-tp', 'dB', v => preset.loudnorm.TP = parseFloat(v));
+}
+
+function bindSlider(id, unit, setter, formatter = null) {
+    const slider = document.getElementById(id);
+    const valEl = document.getElementById(`${id}-val`);
+    if (!slider || !valEl) return;
+    
+    slider.addEventListener('input', (e) => {
+        const val = e.target.value;
+        setter(val);
+        const displayVal = formatter ? formatter(parseFloat(val)) : val;
+        valEl.textContent = unit ? `${displayVal} ${unit}` : displayVal;
+    });
+}
+
+function bindToggle(id, cardId, setter) {
+    const toggle = document.getElementById(id);
+    const card = document.getElementById(cardId);
+    if (!toggle) return;
+    
+    toggle.addEventListener('change', (e) => {
+        setter(e.target.checked);
+        if (card) {
+            card.classList.toggle('disabled', !e.target.checked);
+        }
+    });
+}
+
+/**
+ * Reset voice effects editor to original preset
+ */
+function resetVoiceEffectsEditor() {
+    const presetId = state.audioMixer.voiceEffects.presetId;
+    const preset = state.audioMixer.voiceEffects.presets.find(p => p.id === presetId);
+    if (preset) {
+        state.audioMixer.voiceEffects.editingPreset = JSON.parse(JSON.stringify(preset));
+        renderVoiceEffectsEditor();
+        showToast('Reset to preset defaults', 'info');
+    }
+}
+
+/**
+ * Apply voice effects changes (custom settings for this session)
+ */
+function applyVoiceEffectsChanges() {
+    // Store custom settings in state for use during processing
+    state.audioMixer.voiceEffects.customSettings = state.audioMixer.voiceEffects.editingPreset;
+    closeVoiceEffectsEditor();
+    showToast('Voice effects settings applied!', 'success');
+}
+
+/**
+ * Save current voice effects as a new preset
+ */
+async function saveVoiceEffectsAsPreset() {
+    const name = prompt('Enter preset name:');
+    if (!name || !name.trim()) return;
+    
+    const settings = state.audioMixer.voiceEffects.editingPreset;
+    if (!settings) return;
+    
+    try {
+        const response = await fetch('/api/voice-effects/presets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: name.trim(),
+                description: `Custom preset based on ${settings.name}`,
+                settings: settings
+            })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Failed to save preset');
+        }
+        
+        const newPreset = await response.json();
+        state.audioMixer.voiceEffects.presets.push(newPreset);
+        state.audioMixer.voiceEffects.presetId = newPreset.id;
+        
+        closeVoiceEffectsEditor();
+        renderAudioMixerContent();
+        showToast('Voice effects preset saved!', 'success');
+    } catch (err) {
+        showToast(`Failed to save preset: ${err.message}`, 'error');
+    }
 }
 
 // ============== Settings ==============
@@ -1212,6 +2541,7 @@ async function startProcessing() {
             trim_end: f.trim_end || 0
         })),
         audio_mix_settings: getAudioMixSettings(),
+        voice_effects_preset_id: getVoiceEffectsPresetId(),
         profile_id: profileId || null,
         transition,
         transition_duration: transitionDuration,
@@ -3699,6 +5029,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initFontSelectors();
     loadProfileSelect();
     initCollapsibleCards();
+    loadAudioPresetsAndTypes(); // Load audio presets and track types
     
     // Show onboarding for first-time users
     setTimeout(initOnboarding, 500);
