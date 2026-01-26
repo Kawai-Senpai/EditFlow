@@ -1083,10 +1083,26 @@ def calculate_auto_levels():
     # Calculate levels based on actual loudness + track types
     levels = audio_preset_manager.calculate_auto_levels_from_analysis(analysis, track_types)
     
+    # Ensure analysis contains only JSON-safe numbers
+    safe_analysis = []
+    for item in analysis:
+        if not isinstance(item, dict):
+            continue
+        safe_item = {}
+        for key, value in item.items():
+            if isinstance(value, float):
+                if value != value or value in (float("inf"), float("-inf")):
+                    safe_item[key] = None
+                else:
+                    safe_item[key] = value
+            else:
+                safe_item[key] = value
+        safe_analysis.append(safe_item)
+
     return jsonify({
-        "levels": levels, 
+        "levels": levels,
         "analyzed": True,
-        "analysis": analysis  # Include raw analysis for UI display
+        "analysis": safe_analysis  # Include sanitized analysis for UI display
     })
 
 

@@ -26,238 +26,179 @@ from .config import PROFILES_DIR, FFMPEG_PATH, TEMP_DIR
 # Notes:
 # - thresholds in acompressor/agate are linear sample magnitudes (0..1), not dB.
 # - the limiter is intentionally set with level=disabled (see build_filter_chain).
-DEFAULT_VOICE_PRESETS: List[Dict[str, Any]] = [
-    {
-        "id": "default_clean",
-        "name": "Clean Voice",
-        "description": "Natural cleanup + slow leveling - reduces distance swings without pumping",
-        "is_default": True,
-        "highpass_hz": 80,
-        "lowpass_hz": 16000,
-        "noise_reduction": {
-            "enabled": True,
-            "type": "afftdn",
-            "nr": 10,
-            "nf": -55,
-            "track_noise": False
-        },
-        "gate": {"enabled": False, "threshold": 0.02, "ratio": 2.0, "attack_ms": 5, "release_ms": 120, "range": 0.06125},
-        "eq_bands": [
-            {"f_hz": 120, "gain_db": -2.0, "q": 1.0},
-            {"f_hz": 250, "gain_db": -1.5, "q": 1.0},
-            {"f_hz": 3500, "gain_db": 3.0, "q": 1.2},
-            {"f_hz": 9000, "gain_db": 2.0, "q": 1.0}
-        ],
-        "compressor": {
-            "enabled": True,
-            "threshold": 0.14,
-            "ratio": 2.6,
-            "attack_ms": 20,
-            "release_ms": 250,
-            "makeup": 1.12,
-            "knee": 3.0
-        },
-        "deesser": {"enabled": True, "i": 0.25, "m": 0.4, "f": 0.6},
-        "exciter": {"enabled": False, "amount": 0.6, "drive": 2.0, "blend": 0.0, "freq": 7500, "ceil": 16000},
-        "leveling": {
-            "enabled": True,
-            "type": "dynaudnorm",
-            "framelen_ms": 1500,
-            "gausssize": 101,
-            "peak": 0.93,
-            "compress": 5.0,
-            "maxgain": 10.0,
-            "threshold": 0.0,
-            "volume_restore": 1.0
-        },
-        "limiter": {"enabled": True, "limit": 0.89, "attack": 5, "release": 80},
-        "deepening": {"enabled": False, "semitones": -0.3},
-        "loudnorm": {"enabled": False, "I": -16, "LRA": 11, "TP": -1.5, "two_pass": True}
-    },
-    {
-        "id": "default_authority",
-        "name": "Authority Voice",
-        "description": "Punchy and slightly warmer - still smooth, not twitchy",
-        "is_default": True,
-        "highpass_hz": 70,
-        "lowpass_hz": 15000,
-        "noise_reduction": {
-            "enabled": True,
-            "type": "afftdn",
-            "nr": 10,
-            "nf": -48,
-            "track_noise": False
-        },
-        "gate": {"enabled": False, "threshold": 0.02, "ratio": 2.2, "attack_ms": 5, "release_ms": 140, "range": 0.06125},
-        "eq_bands": [
-            {"f_hz": 80, "gain_db": 1.5, "q": 0.7},
-            {"f_hz": 150, "gain_db": 2.0, "q": 0.9},
-            {"f_hz": 300, "gain_db": -2.0, "q": 1.0},
-            {"f_hz": 3500, "gain_db": 4.0, "q": 1.1},
-            {"f_hz": 9000, "gain_db": 2.5, "q": 1.0}
-        ],
-        "compressor": {
-            "enabled": True,
-            "threshold": 0.12,
-            "ratio": 3.4,
-            "attack_ms": 12,
-            "release_ms": 210,
-            "makeup": 1.18,
-            "knee": 2.8
-        },
-        "deesser": {"enabled": True, "i": 0.30, "m": 0.45, "f": 0.6},
-        "exciter": {"enabled": True, "amount": 0.65, "drive": 2.3, "blend": 0.0, "freq": 7500, "ceil": 16000},
-        "leveling": {
-            "enabled": True,
-            "type": "dynaudnorm",
-            "framelen_ms": 1300,
-            "gausssize": 101,
-            "peak": 0.93,
-            "compress": 5.5,
-            "maxgain": 10.0,
-            "threshold": 0.0,
-            "volume_restore": 1.0
-        },
-        "limiter": {"enabled": True, "limit": 0.89, "attack": 4, "release": 70},
-        "deepening": {"enabled": True, "method": "shelf", "bass_gain_db": 2.5, "bass_f_hz": 140},
-        "loudnorm": {"enabled": False, "I": -16, "LRA": 11, "TP": -1.5, "two_pass": True}
-    },
-    {
-        "id": "default_podcast",
-        "name": "Podcast Polish",
-        "description": "Very steady voice level with minimal artifacts (no loudnorm in preview path)",
-        "is_default": True,
-        "highpass_hz": 80,
-        "lowpass_hz": 16000,
-        "noise_reduction": {
-            "enabled": True,
-            "type": "afftdn",
-            "nr": 10,
-            "nf": -50,
-            "track_noise": False
-        },
-        "gate": {"enabled": False, "threshold": 0.018, "ratio": 2.2, "attack_ms": 8, "release_ms": 160, "range": 0.06125},
-        "eq_bands": [
-            {"f_hz": 120, "gain_db": -1.5, "q": 1.0},
-            {"f_hz": 250, "gain_db": -1.5, "q": 1.0},
-            {"f_hz": 4000, "gain_db": 3.0, "q": 1.1},
-            {"f_hz": 11000, "gain_db": 1.5, "q": 0.9}
-        ],
-        "compressor": {
-            "enabled": True,
-            "threshold": 0.11,
-            "ratio": 3.0,
-            "attack_ms": 18,
-            "release_ms": 240,
-            "makeup": 1.15,
-            "knee": 2.8
-        },
-        "deesser": {"enabled": True, "i": 0.28, "m": 0.45, "f": 0.6},
-        "exciter": {"enabled": False, "amount": 0.6, "drive": 2.0, "blend": 0.0, "freq": 7500, "ceil": 16000},
-        "leveling": {
-            "enabled": True,
-            "type": "dynaudnorm",
-            "framelen_ms": 1800,
-            "gausssize": 121,
-            "peak": 0.92,
-            "compress": 5.5,
-            "maxgain": 10.0,
-            "threshold": 0.0,
-            "volume_restore": 1.0
-        },
-        "limiter": {"enabled": True, "limit": 0.89, "attack": 5, "release": 90},
-        "deepening": {"enabled": False, "semitones": -0.2},
-        "loudnorm": {"enabled": False, "I": -16, "LRA": 11, "TP": -1.5, "two_pass": True}
-    },
-    {
-        "id": "default_gaming",
-        "name": "Gaming Voice",
-        "description": "Forward voice for streams - stable level without the robotic pumping",
-        "is_default": True,
-        "highpass_hz": 100,
-        "lowpass_hz": 14000,
-        "noise_reduction": {
-            "enabled": True,
-            "type": "afftdn",
-            "nr": 12,
-            "nf": -45,
-            "track_noise": False
-        },
-        "gate": {"enabled": False, "threshold": 0.025, "ratio": 2.5, "attack_ms": 5, "release_ms": 100, "range": 0.06125},
-        "eq_bands": [
-            {"f_hz": 150, "gain_db": -3.0, "q": 1.0},
-            {"f_hz": 4000, "gain_db": 4.0, "q": 1.2},
-            {"f_hz": 8000, "gain_db": 3.0, "q": 1.0}
-        ],
-        "compressor": {
-            "enabled": True,
-            "threshold": 0.10,
-            "ratio": 4.0,
-            "attack_ms": 8,
-            "release_ms": 160,
-            "makeup": 1.18,
-            "knee": 2.5
-        },
-        "deesser": {"enabled": True, "i": 0.32, "m": 0.5, "f": 0.6},
-        "exciter": {"enabled": True, "amount": 0.7, "drive": 2.6, "blend": 0.0, "freq": 6500, "ceil": 14000},
-        "leveling": {
-            "enabled": True,
-            "type": "dynaudnorm",
-            "framelen_ms": 1200,
-            "gausssize": 101,
-            "peak": 0.92,
-            "compress": 6.0,
-            "maxgain": 10.0,
-            "threshold": 0.0,
-            "volume_restore": 1.0
-        },
-        "limiter": {"enabled": True, "limit": 0.88, "attack": 4, "release": 70},
-        "deepening": {"enabled": False, "semitones": -0.2},
-        "loudnorm": {"enabled": False, "I": -14, "LRA": 10, "TP": -1.0, "two_pass": True}
-    },
-    {
-        "id": "default_minimal",
-        "name": "Minimal Processing",
-        "description": "Cleanup only - does not try to fix distance or performance problems",
-        "is_default": True,
-        "highpass_hz": 70,
-        "lowpass_hz": 18000,
-        "noise_reduction": {
-            "enabled": True,
-            "type": "afftdn",
-            "nr": 8,
-            "nf": -55,
-            "track_noise": False
-        },
-        "gate": {"enabled": False, "threshold": 0.02, "ratio": 2.0, "attack_ms": 5, "release_ms": 120, "range": 0.06125},
-        "eq_bands": [],
-        "compressor": {
-            "enabled": False,
-            "threshold": 0.15,
-            "ratio": 2.0,
-            "attack_ms": 30,
-            "release_ms": 300,
-            "makeup": 1.0,
-            "knee": 3.0
-        },
-        "deesser": {"enabled": False, "i": 0.2, "m": 0.35, "f": 0.6},
-        "exciter": {"enabled": False, "amount": 0.5, "drive": 1.5, "blend": 0.0, "freq": 8000, "ceil": 16000},
-        "leveling": {
-            "enabled": False,
-            "type": "dynaudnorm",
-            "framelen_ms": 1500,
-            "gausssize": 101,
-            "peak": 0.92,
-            "compress": 5.0,
-            "maxgain": 10.0,
-            "threshold": 0.0,
-            "volume_restore": 1.0
-        },
-        "limiter": {"enabled": True, "limit": 0.90, "attack": 5, "release": 80},
-        "deepening": {"enabled": False, "semitones": -0.2},
-        "loudnorm": {"enabled": False, "I": -16, "LRA": 11, "TP": -1.5, "two_pass": True}
-    }
-]
+DEFAULT_VOICE_PRESETS: List[Dict[str, Any]] = [{'id': 'default_clean',
+  'name': 'Clean Voice',
+  'description': 'Subtle enhancement for clean recordings - natural sounding',
+  'is_default': True,
+  'highpass_hz': 80,
+  'lowpass_hz': 16000,
+  'noise_reduction': {'enabled': True, 'type': 'afftdn', 'nr': 10, 'nf': -55, 'track_noise': False},
+  'gate': {'enabled': False, 'threshold': 0.02, 'ratio': 2.0, 'attack_ms': 5, 'release_ms': 120, 'range': 0.06125},
+  'eq_bands': [{'f_hz': 120, 'gain_db': -2.0, 'q': 1.0},
+               {'f_hz': 250, 'gain_db': -1.5, 'q': 1.0},
+               {'f_hz': 3500, 'gain_db': 3.0, 'q': 1.2},
+               {'f_hz': 9000, 'gain_db': 2.0, 'q': 1.0}],
+  'compressor': {'enabled': True,
+                 'threshold': 0.08,
+                 'ratio': 2.4,
+                 'attack_ms': 15,
+                 'release_ms': 250,
+                 'makeup': 1.35,
+                 'knee': 3.0},
+  'deesser': {'enabled': True, 'i': 0.25, 'm': 0.4, 'f': 0.6},
+    'exciter': {'enabled': False, 'amount': 0.4, 'drive': 1.4, 'blend': 0.0, 'freq': 7500, 'ceil': 16000},
+  'leveling': {'enabled': True,
+               'type': 'dynaudnorm',
+               'framelen_ms': 900,
+               'gausssize': 51,
+               'peak': 0.93,
+               'compress': 0.0,
+               'maxgain': 10.0,
+               'threshold': 0.003,
+               'volume_restore': 1.0,
+               'targetrms': 0.07,
+               'overlap': 0.5},
+  'limiter': {'enabled': True, 'limit': 0.97, 'attack': 5, 'release': 60},
+  'deepening': {'enabled': False, 'semitones': -0.3},
+  'loudnorm': {'enabled': False, 'I': -16, 'LRA': 11, 'TP': -1.5, 'two_pass': False}},
+ {'id': 'default_authority',
+  'name': 'Authority Voice',
+  'description': 'Adds subtle gravitas and punch - good for tutorials/presentations',
+  'is_default': True,
+  'highpass_hz': 70,
+  'lowpass_hz': 15000,
+  'noise_reduction': {'enabled': True, 'type': 'afftdn', 'nr': 10, 'nf': -48, 'track_noise': False},
+  'gate': {'enabled': False, 'threshold': 0.02, 'ratio': 2.2, 'attack_ms': 5, 'release_ms': 140, 'range': 0.06125},
+  'eq_bands': [{'f_hz': 80, 'gain_db': 1.5, 'q': 0.7},
+               {'f_hz': 150, 'gain_db': 2.0, 'q': 0.9},
+               {'f_hz': 300, 'gain_db': -2.0, 'q': 1.0},
+               {'f_hz': 3500, 'gain_db': 4.0, 'q': 1.1},
+               {'f_hz': 9000, 'gain_db': 2.5, 'q': 1.0}],
+  'compressor': {'enabled': True,
+                 'threshold': 0.07,
+                 'ratio': 3.0,
+                 'attack_ms': 10,
+                 'release_ms': 220,
+                 'makeup': 1.6,
+                 'knee': 2.8},
+  'deesser': {'enabled': True, 'i': 0.3, 'm': 0.45, 'f': 0.6},
+    'exciter': {'enabled': False, 'amount': 0.5, 'drive': 1.6, 'blend': 0.0, 'freq': 7500, 'ceil': 16000},
+  'leveling': {'enabled': True,
+               'type': 'dynaudnorm',
+               'framelen_ms': 900,
+               'gausssize': 51,
+               'peak': 0.93,
+               'compress': 0.0,
+               'maxgain': 10.0,
+               'threshold': 0.003,
+               'volume_restore': 1.0,
+               'targetrms': 0.072,
+               'overlap': 0.5},
+  'limiter': {'enabled': True, 'limit': 0.97, 'attack': 5, 'release': 60},
+  'deepening': {'enabled': False, 'semitones': -0.4},
+  'loudnorm': {'enabled': False, 'I': -16, 'LRA': 11, 'TP': -1.5, 'two_pass': False}},
+ {'id': 'default_podcast',
+  'name': 'Podcast Polish',
+  'description': 'Radio-like clarity and consistency - designed for voice-only/podcasts',
+  'is_default': True,
+  'highpass_hz': 70,
+  'lowpass_hz': 15000,
+  'noise_reduction': {'enabled': True, 'type': 'afftdn', 'nr': 10, 'nf': -52, 'track_noise': False},
+  'gate': {'enabled': False, 'threshold': 0.018, 'ratio': 2.2, 'attack_ms': 8, 'release_ms': 160, 'range': 0.06125},
+  'eq_bands': [{'f_hz': 120, 'gain_db': -2.0, 'q': 1.0},
+               {'f_hz': 250, 'gain_db': -2.0, 'q': 1.0},
+               {'f_hz': 3500, 'gain_db': 3.5, 'q': 1.2},
+               {'f_hz': 9000, 'gain_db': 2.0, 'q': 1.0}],
+  'compressor': {'enabled': True,
+                 'threshold': 0.06,
+                 'ratio': 3.2,
+                 'attack_ms': 10,
+                 'release_ms': 240,
+                 'makeup': 1.8,
+                 'knee': 2.8},
+  'deesser': {'enabled': True, 'i': 0.28, 'm': 0.45, 'f': 0.6},
+    'exciter': {'enabled': False, 'amount': 0.5, 'drive': 1.5, 'blend': 0.0, 'freq': 7500, 'ceil': 16000},
+  'leveling': {'enabled': True,
+               'type': 'dynaudnorm',
+               'framelen_ms': 1000,
+               'gausssize': 61,
+               'peak': 0.93,
+               'compress': 0.0,
+               'maxgain': 9.0,
+               'threshold': 0.002,
+               'volume_restore': 1.0,
+               'targetrms': 0.07,
+               'overlap': 0.5},
+  'limiter': {'enabled': True, 'limit': 0.97, 'attack': 5, 'release': 60},
+  'deepening': {'enabled': False, 'semitones': -0.2},
+  'loudnorm': {'enabled': False, 'I': -16, 'LRA': 11, 'TP': -1.5, 'two_pass': True}},
+ {'id': 'default_gaming',
+  'name': 'Gaming Voice',
+  'description': 'Punchy and present - tuned to cut through gameplay mixes',
+  'is_default': True,
+  'highpass_hz': 85,
+  'lowpass_hz': 15000,
+  'noise_reduction': {'enabled': True, 'type': 'afftdn', 'nr': 11, 'nf': -50, 'track_noise': False},
+  'gate': {'enabled': False, 'threshold': 0.025, 'ratio': 2.5, 'attack_ms': 5, 'release_ms': 100, 'range': 0.06125},
+  'eq_bands': [{'f_hz': 140, 'gain_db': -2.5, 'q': 1.0},
+               {'f_hz': 300, 'gain_db': -2.0, 'q': 1.0},
+               {'f_hz': 3500, 'gain_db': 4.5, 'q': 1.1},
+               {'f_hz': 9000, 'gain_db': 2.5, 'q': 1.0}],
+  'compressor': {'enabled': True,
+                 'threshold': 0.05,
+                 'ratio': 4.0,
+                 'attack_ms': 5,
+                 'release_ms': 180,
+                 'makeup': 2.0,
+                 'knee': 2.5},
+  'deesser': {'enabled': True, 'i': 0.32, 'm': 0.5, 'f': 0.6},
+    'exciter': {'enabled': False, 'amount': 0.55, 'drive': 1.6, 'blend': 0.0, 'freq': 7500, 'ceil': 16000},
+  'leveling': {'enabled': True,
+               'type': 'dynaudnorm',
+               'framelen_ms': 750,
+               'gausssize': 41,
+               'peak': 0.93,
+               'compress': 0.0,
+               'maxgain': 12.0,
+               'threshold': 0.0015,
+               'volume_restore': 1.0,
+               'targetrms': 0.08,
+               'overlap': 0.55},
+  'limiter': {'enabled': True, 'limit': 0.97, 'attack': 5, 'release': 60},
+  'deepening': {'enabled': False, 'semitones': -0.2},
+  'loudnorm': {'enabled': False, 'I': -14, 'LRA': 10, 'TP': -1.0, 'two_pass': False}},
+ {'id': 'default_minimal',
+  'name': 'Minimal Processing',
+  'description': 'Very light touch - keeps recordings close to original',
+  'is_default': True,
+  'highpass_hz': 80,
+  'lowpass_hz': 16000,
+  'noise_reduction': {'enabled': True, 'type': 'afftdn', 'nr': 8, 'nf': -50, 'track_noise': False},
+  'gate': {'enabled': False, 'threshold': 0.02, 'ratio': 2.0, 'attack_ms': 5, 'release_ms': 120, 'range': 0.06125},
+  'eq_bands': [{'f_hz': 120, 'gain_db': -1.0, 'q': 1.0}, {'f_hz': 3500, 'gain_db': 2.0, 'q': 1.2}],
+  'compressor': {'enabled': False,
+                 'threshold': 0.15,
+                 'ratio': 2.0,
+                 'attack_ms': 30,
+                 'release_ms': 300,
+                 'makeup': 1.0,
+                 'knee': 3.0},
+  'deesser': {'enabled': False, 'i': 0.2, 'm': 0.4, 'f': 0.6},
+    'exciter': {'enabled': False, 'amount': 0.4, 'drive': 1.4, 'blend': 0.0, 'freq': 7500, 'ceil': 16000},
+  'leveling': {'enabled': False,
+               'type': 'dynaudnorm',
+               'framelen_ms': 500,
+               'gausssize': 31,
+               'peak': 0.95,
+               'compress': 0.0,
+               'maxgain': 6.0,
+               'threshold': 0.01,
+               'volume_restore': 1.0,
+               'targetrms': 0.0,
+               'overlap': 0.0},
+  'limiter': {'enabled': True, 'limit': 0.98, 'attack': 5, 'release': 50},
+  'deepening': {'enabled': False, 'semitones': 0},
+  'loudnorm': {'enabled': False, 'I': -16, 'LRA': 11, 'TP': -1.5, 'two_pass': False}}]
 
 
 class VoiceEffectsProcessor:
@@ -431,6 +372,29 @@ class VoiceEffectsProcessor:
         filters = self._load_available_filters()
         return (not filters) or (name in filters)
 
+    def _get_filter_help(self, name: str) -> str:
+        if not hasattr(self, "_filter_help_cache"):
+            self._filter_help_cache = {}
+        if name in self._filter_help_cache:
+            return self._filter_help_cache[name]
+
+        try:
+            proc = subprocess.run(
+                [self.ffmpeg_path, "-hide_banner", "-h", f"filter={name}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            help_text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        except Exception:
+            help_text = ""
+
+        self._filter_help_cache[name] = help_text
+        return help_text
+
+    def _filter_supports(self, filter_name: str, needle: str) -> bool:
+        return needle in self._get_filter_help(filter_name)
+
     # ----------------------------
     # Filterchain builders
     # ----------------------------
@@ -571,15 +535,27 @@ class VoiceEffectsProcessor:
 
         framelen = int(lvl.get("framelen_ms", 500))
         gausssize = int(lvl.get("gausssize", 31))
-        # Lower peak so dynaudnorm doesn't reduce volume too much
-        peak = float(lvl.get("peak", 0.9))
-        compress = float(lvl.get("compress", 3.0))
-        # Lower maxgain to prevent boosting noise
-        maxgain = float(lvl.get("maxgain", 5.0))
-        # CRITICAL: threshold prevents boosting noise floor
-        threshold = float(lvl.get("threshold", 0.001))
+        peak = float(lvl.get("peak", 0.93))
+        maxgain = float(lvl.get("maxgain", 10.0))
+        threshold = float(lvl.get("threshold", 0.003))
+        compress = float(lvl.get("compress", 0.0))
+        targetrms = float(lvl.get("targetrms", 0.0))
+        overlap = float(lvl.get("overlap", 0.0))
 
-        chain = [f"dynaudnorm=f={framelen}:g={gausssize}:p={peak}:s={compress}:m={maxgain}:t={threshold}"]
+        if 0.0 < compress < 3.0:
+            compress = 3.0
+
+        filt = f"dynaudnorm=f={framelen}:g={gausssize}:p={peak}:m={maxgain}:t={threshold}"
+        if compress > 0.0:
+            filt += f":s={compress}"
+        if targetrms > 0.0 and self._filter_supports("dynaudnorm", "targetrms, r"):
+            filt += f":r={targetrms}"
+        if overlap > 0.0 and self._filter_supports("dynaudnorm", "overlap, o"):
+            filt += f":o={overlap}"
+        # NOTE: Some FFmpeg builds do not support dynaudnorm's overlap option.
+        # We skip it for compatibility.
+
+        chain = [filt]
         volume_restore = float(lvl.get("volume_restore", 1.0))
         if volume_restore != 1.0:
             chain.append(f"volume={volume_restore}")

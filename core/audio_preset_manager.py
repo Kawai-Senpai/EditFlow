@@ -188,16 +188,10 @@ class AudioPresetManager:
         """
         Calculate auto-leveled volume settings based on actual LUFS analysis and track types.
         
-        The algorithm:
-        1. Analyze LUFS of all tracks
-        2. Calculate gain to bring all tracks to the SAME reference level (-16 LUFS)
-        3. THEN apply type-based relative reductions (voice=1.0, game=0.25, etc.)
-        
-        This approach:
-        - First equalizes all tracks to the same loudness
-        - Then applies type-based reduction for mix balance
-        
-        Final volume = normalization_gain × type_reduction
+        Current approach:
+        - Use type-based relative levels (voice/game/music/sfx)
+        - Let runtime leveling (dynaudnorm) handle raising low parts smoothly
+        - Avoid aggressive per-track gain that can cause clipping
         
         Args:
             track_analysis: List of dicts with {track_name, track_index, loudness_lufs, peak_db}
@@ -209,16 +203,16 @@ class AudioPresetManager:
         if not track_analysis:
             # No analysis available, use type-based fallback
             return self.calculate_auto_levels(track_types)
-        
+
         # Reference level to normalize all tracks to (before type-based adjustment)
         REFERENCE_LUFS = -16.0
-        
+
         result = {}
-        
+
         for track_info in track_analysis:
             track_name = track_info.get("track_name", f"Track {track_info.get('track_index', 0) + 1}")
             current_lufs = track_info.get("loudness_lufs")
-            
+
             # Skip tracks with no valid LUFS reading
             if current_lufs is None or current_lufs < -70:
                 # Silent or very quiet track - use type-based level only
@@ -226,36 +220,33 @@ class AudioPresetManager:
                 type_info = TRACK_TYPES.get(track_type, TRACK_TYPES["other"])
                 result[track_name] = type_info["auto_level"]
                 continue
-            
+
             # Step 1: Calculate gain needed to reach reference level
-            # gain_db = target - current
-            # If current is -23 LUFS, we need +7 dB to reach -16 LUFS
             gain_db = REFERENCE_LUFS - current_lufs
-            
+
             # Convert dB to linear gain
-            # 10^(gain_db / 20)
             normalization_gain = 10 ** (gain_db / 20.0)
-            
+
             # Step 2: Get type-based relative reduction
             track_type = track_types.get(track_name, "other")
             type_info = TRACK_TYPES.get(track_type, TRACK_TYPES["other"])
             type_reduction = type_info["auto_level"]
-            
+
             # Step 3: Combine normalization gain with type reduction
             final_volume = normalization_gain * type_reduction
-            
+
             # Clamp to reasonable range (0.0 - 2.0)
             final_volume = max(0.0, min(2.0, final_volume))
-            
+
             result[track_name] = round(final_volume, 3)
-        
+
         # Handle any tracks in track_types but not in analysis
         for track_name in track_types:
             if track_name not in result:
                 track_type = track_types.get(track_name, "other")
                 type_info = TRACK_TYPES.get(track_type, TRACK_TYPES["other"])
                 result[track_name] = type_info["auto_level"]
-        
+
         return result
     
     def reset_defaults(self):

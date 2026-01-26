@@ -3,6 +3,7 @@ Video processor - handles all FFmpeg operations for video processing
 """
 import subprocess
 import json
+import math
 import os
 import uuid
 import re
@@ -528,10 +529,18 @@ class VideoProcessor:
                     except (ValueError, IndexError):
                         pass
             
+            def _safe(val: float) -> Optional[float]:
+                if val is None:
+                    return None
+                try:
+                    return val if math.isfinite(val) else None
+                except Exception:
+                    return None
+
             return {
-                "loudness_lufs": loudness_lufs,
-                "loudness_range": loudness_range,
-                "peak_db": peak_db
+                "loudness_lufs": _safe(loudness_lufs),
+                "loudness_range": _safe(loudness_range),
+                "peak_db": _safe(peak_db)
             }
             
         except Exception as e:
