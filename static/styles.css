@@ -48,6 +48,10 @@ body {
 
 ::-webkit-scrollbar { display: none; }
 
+/* Utility classes */
+.hidden { display: none !important; }
+.text-xs { font-size: 0.7rem !important; }
+
 /* ============== Layout ============== */
 .app { display: flex; height: 100vh; width: 100vw; }
 
@@ -730,7 +734,7 @@ body {
 /* ============== Mode Selector ============== */
 .mode-selector {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 8px;
 }
 
@@ -758,6 +762,15 @@ body {
 .mode-info { display: flex; flex-direction: column; gap: 1px; }
 .mode-name { font-size: 0.7rem; font-weight: 700; }
 .mode-desc { font-size: 0.6rem; color: var(--text-muted); }
+
+/* Batch Settings */
+.batch-settings {
+    margin-top: 10px;
+    padding: 10px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+}
 
 /* ============== File Drop ============== */
 .file-drop-zone {
@@ -2307,6 +2320,22 @@ body {
     color: var(--text-primary);
 }
 
+.ve-mini-toggle {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    font-size: 0.5rem;
+    color: var(--text-muted);
+    min-width: 32px;
+}
+
+.ve-mini-toggle input[type="checkbox"] {
+    width: 10px;
+    height: 10px;
+    accent-color: var(--accent);
+}
+
 .ve-card-body {
     display: flex;
     flex-direction: column;
@@ -2358,6 +2387,22 @@ body {
     color: var(--text-tertiary);
     min-width: 28px;
     text-align: right;
+}
+
+.ve-select {
+    flex: 1;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    color: var(--text-primary);
+    font-size: 0.55rem;
+    padding: 2px 4px;
+    cursor: pointer;
+}
+
+.ve-select:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 .ve-actions {
@@ -2505,7 +2550,10 @@ body {
     .nav-item { justify-content: center; padding: 8px; }
     .view-header { padding: 12px 14px; }
     .process-container, .branding-container, .outputs-container { padding: 12px 14px; }
-    .mode-selector { grid-template-columns: 1fr; }
+    .mode-selector { grid-template-columns: 1fr 1fr 1fr; }
+    @media (max-width: 500px) {
+        .mode-selector { grid-template-columns: 1fr; }
+    }
     .settings-grid { grid-template-columns: 1fr; }
     .modal-content { max-height: 100vh; margin: 0; border-radius: 0; }
 }

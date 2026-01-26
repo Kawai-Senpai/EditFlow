@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/FFmpeg-Required-007808?style=for-the-badge&logo=ffmpeg&logoColor=white" alt="FFmpeg">
   <img src="https://img.shields.io/badge/Flask-Backend-000000?style=for-the-badge&logo=flask&logoColor=white" alt="Flask">
-  <img src="https://img.shields.io/badge/Version-1.1.0-blue?style=for-the-badge" alt="Version">
+   <img src="https://img.shields.io/badge/Version-1.2.0-blue?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 </p>
 
@@ -31,6 +31,11 @@
 - **Mute/Solo functionality** - Quickly isolate or mute specific tracks
 - **Audio preview** - Listen to your mix before processing
 - **Global or per-video settings** - Apply same mix to all videos or customize each
+- **Audio mix presets** - Save/load your favorite level and tag setups
+- **Track type tagging** - Voice, game audio, music, SFX, other
+- **Auto-level (LUFS-aware)** - Analyze loudness and balance tracks by type
+- **Voice effects suite** - Noise reduction, gate, EQ, compressor, de-esser, exciter, leveler, limiter
+- **Voice effects preview** - Hear effects before render
 
 ### 🎨 Branding System
 - **Intro/Outro support** - Prepend or overlay intro/outro clips with your branding
@@ -48,6 +53,7 @@
 - **Non-destructive** - References original files, no unnecessary copies
 - **Output management** - Browse, preview, and manage rendered outputs
 - **Collapsible sections** - Clean UI with expandable trim and audio mixer panels
+- **Batch mode** - Process each file separately with consistent settings
 
 ---
 
@@ -125,6 +131,24 @@ If your recordings have multiple audio tracks (e.g., OBS multi-track recording w
 4. **Solo (S)** - Listen only to selected tracks
 5. **Preview** - Click "Play Preview" to hear your mix before processing
 6. **Apply to all** - Toggle to apply same settings to all videos
+
+### Audio Presets + Auto-Level
+
+1. **Tag tracks** - Assign Voice, Game, Music, SFX, or Other
+2. **Auto-Level** - Analyze loudness and balance by track type
+3. **Save Preset** - Store your favorite mix and tags for reuse
+
+### Voice Effects
+
+1. **Enable Voice Effects** - Applies to tracks tagged as Voice
+2. **Choose a preset** - Clean Voice, Authority, Podcast, Gaming, Minimal
+3. **Preview** - Hear the effects before rendering
+
+### Batch Mode
+
+1. Select **Batch** mode in the top section
+2. Choose naming strategy (original, prefix, suffix, sequential)
+3. Process all files individually with the same settings
 
 ### Branding Profiles
 

@@ -83,6 +83,16 @@
                                 </div>
                             </label>
                             <label class="mode-option">
+                                <input type="radio" name="mode" value="batch">
+                                <div class="mode-card">
+                                    <div class="mode-icon">📦</div>
+                                    <div class="mode-info">
+                                        <span class="mode-name">Batch</span>
+                                        <span class="mode-desc">Process each file separately</span>
+                                    </div>
+                                </div>
+                            </label>
+                            <label class="mode-option">
                                 <input type="radio" name="mode" value="episodic">
                                 <div class="mode-card">
                                     <div class="mode-icon">📺</div>
@@ -92,6 +102,22 @@
                                     </div>
                                 </div>
                             </label>
+                        </div>
+                        <!-- Batch naming settings -->
+                        <div class="batch-settings" id="batch-settings" style="display: none; margin-top: 0.75rem;">
+                            <div class="form-row" style="margin-bottom: 0.5rem;">
+                                <label class="form-label text-xs">Naming Strategy</label>
+                                <select id="batch-naming" class="form-select form-select-sm">
+                                    <option value="original">Keep Original Name</option>
+                                    <option value="prefix">Add Prefix</option>
+                                    <option value="suffix">Add Suffix</option>
+                                    <option value="sequential">Sequential (01, 02...)</option>
+                                </select>
+                            </div>
+                            <div class="form-row" id="batch-prefix-row" style="display: none; margin-bottom: 0.5rem;">
+                                <label class="form-label text-xs">Prefix/Suffix Text</label>
+                                <input type="text" id="batch-prefix-text" class="form-input form-input-sm" placeholder="e.g. Edited_">
+                            </div>
                         </div>
                     </div>
 

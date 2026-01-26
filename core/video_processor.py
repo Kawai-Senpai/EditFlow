@@ -283,6 +283,7 @@ class VideoProcessor:
     def _build_audio_mix_filter(self, input_idx: int, audio_mix: list, duration: float = None,
                                  async_resample: bool = True, 
                                  voice_effects_preset_id: str = None,
+                                 voice_effects_settings: dict = None,
                                  normalize_first: bool = True) -> tuple[str, str]:
         """
         Build audio filter chain that mixes multiple audio tracks with volume levels.
@@ -300,6 +301,7 @@ class VideoProcessor:
             duration: Optional duration limit for atrim
             async_resample: Whether to apply async resampling
             voice_effects_preset_id: Optional voice effects preset ID to apply to voice tracks
+            voice_effects_settings: Optional voice effects settings dict (takes priority over preset_id)
             normalize_first: Whether to normalize tracks before applying volume (recommended)
         
         Returns:
@@ -317,16 +319,31 @@ class VideoProcessor:
                     base_filter += f"atrim=duration={duration},asetpts=PTS-STARTPTS"
             return base_filter + f"[a{input_idx}]", f"a{input_idx}"
         
-        # Get voice effects filter chain if preset is specified
-        voice_filter_chain = ""
-        if voice_effects_preset_id:
-            voice_filter_chain = voice_effects_processor.get_filter_for_track(voice_effects_preset_id)
+        # Get voice effects preset/settings for per-track mixing (no per-track limiter/loudnorm)
+        voice_preset = None
+        if voice_effects_settings:
+            voice_preset = voice_effects_settings
+            print("[AudioMix] Using custom voice effects settings")
+        elif voice_effects_preset_id:
+            voice_preset = voice_effects_processor.get_preset(voice_effects_preset_id)
+            print(f"[AudioMix] Using voice effects preset {voice_effects_preset_id}")
+        else:
+            print("[AudioMix] No voice effects requested")
+
+        voice_track_chain = ""
+        if voice_preset:
+            voice_track_chain = voice_effects_processor.build_track_chain_for_mix(voice_preset)
+            print(f"[AudioMix] Voice track chain: {voice_track_chain[:80] if voice_track_chain else 'EMPTY'}...")
         
         # Check for solo - if any track is solo, only include solo tracks
         has_solo = any(t.get('solo', False) for t in audio_mix)
         
         filter_parts = []
         mix_labels = []
+        
+        # Debug: Print track info with volumes
+        track_info = [f"{t.get('track_index', 0)}:{t.get('trackType', 'other')}@{t.get('volume', 1.0):.2f}" for t in audio_mix]
+        print(f"[AudioMix] Tracks: {track_info}, normalize_first={normalize_first}")
         
         for track in audio_mix:
             track_idx = track.get('track_index', 0)
@@ -356,24 +373,29 @@ class VideoProcessor:
                 filters.append(f"atrim=duration={duration}")
                 filters.append("asetpts=PTS-STARTPTS")
             
-            # Apply voice effects to voice-tagged tracks FIRST (before normalization)
-            if track_type == 'voice' and voice_filter_chain:
-                filters.append(voice_filter_chain)
-            
-            # Step 1: Normalize track to reference level (-16 LUFS)
-            # This ensures all tracks start at the same perceived loudness
-            if normalize_first:
-                # Use dynaudnorm for realtime normalization (faster than loudnorm which requires 2-pass)
-                # This normalizes the perceived loudness while preserving dynamics
-                filters.append("dynaudnorm=f=150:g=15:p=0.9:m=10")
-            
-            # Step 2: Apply relative volume adjustment
-            # Now the volume parameter represents relative level adjustment from normalized state
-            if volume != 1.0:
+            # Apply voice effects to voice-tagged tracks (no per-track limiter/loudnorm)
+            has_voice_effects = track_type == 'voice' and voice_track_chain
+            if has_voice_effects:
+                if voice_track_chain:
+                    filters.append(voice_track_chain)
                 filters.append(f"volume={volume}")
+            else:
+                # Step 1: Normalize track to reference level (-16 LUFS)
+                if normalize_first:
+                    # Slow, smooth leveling to avoid synthetic pumping on low-quality audio
+                    filters.append("dynaudnorm=f=1200:g=101:p=0.92:m=5.0:t=0.001")
+                
+                # Step 2: Apply relative volume adjustment
+                filters.append(f"volume={volume}")
+            
+            # Debug: Log the volume being applied
+            print(f"[AudioMix] Track {track_idx} ({track_type}): volume={volume}, filters={len(filters)}")
             
             if filters:
                 track_filter += ",".join(filters)
+            else:
+                # Should never happen now, but safety fallback
+                track_filter += "anull"
             
             track_filter += f"[{label}]"
             filter_parts.append(track_filter)
@@ -394,7 +416,8 @@ class VideoProcessor:
         output_label = f"amix{input_idx}"
         mix_inputs = "".join(mix_labels)
         # After mixing, apply a limiter to prevent clipping
-        filter_parts.append(f"{mix_inputs}amix=inputs={len(mix_labels)}:duration=first:normalize=0,alimiter=limit=0.98:attack=5:release=50[{output_label}]")
+        # CRITICAL: level=disabled prevents auto-level from fighting with our normalization
+        filter_parts.append(f"{mix_inputs}amix=inputs={len(mix_labels)}:duration=first:normalize=0,alimiter=limit=0.98:attack=5:release=50:level=disabled[{output_label}]")
         
         return ";".join(filter_parts), output_label
     
@@ -546,7 +569,9 @@ class VideoProcessor:
     def generate_audio_preview(self, video_path: str, output_path: str,
                                audio_mix: list, start_time: float = 0,
                                duration: float = 15,
-                               voice_effects_preset_id: str = None) -> bool:
+                               voice_effects_preset_id: str = None,
+                               voice_effects_settings: dict = None,
+                               normalize_first: bool = True) -> bool:
         """
         Generate a short audio preview with the specified mix settings.
         
@@ -557,15 +582,26 @@ class VideoProcessor:
             start_time: Start time in seconds
             duration: Preview duration in seconds
             voice_effects_preset_id: Optional voice effects preset ID to apply to voice tracks
+            voice_effects_settings: Optional voice effects settings dict (takes priority over preset_id)
         
         Returns:
             True if successful, False otherwise
         """
         try:
+            print(f"[AudioPreview] Generating preview: path={video_path}, start={start_time}, dur={duration}")
+            print(f"[AudioPreview] audio_mix={audio_mix}")
+            print(f"[AudioPreview] voice_effects_preset_id={voice_effects_preset_id}, normalize_first={normalize_first}")
+            if voice_effects_settings:
+                print(f"[AudioPreview] voice_effects_settings keys: {list(voice_effects_settings.keys())}")
+            
             filter_str, output_label = self._build_audio_mix_filter(
                 0, audio_mix, duration=duration, async_resample=False,
-                voice_effects_preset_id=voice_effects_preset_id
+                voice_effects_preset_id=voice_effects_preset_id,
+                voice_effects_settings=voice_effects_settings,
+                normalize_first=normalize_first
             )
+            
+            print(f"[AudioPreview] Filter string: {filter_str[:200]}..." if len(filter_str) > 200 else f"[AudioPreview] Filter string: {filter_str}")
             
             cmd = [
                 FFMPEG_PATH, "-y",
@@ -674,12 +710,17 @@ class VideoProcessor:
     def concatenate_videos(self, video_paths: list[str], output_path: str, job: ProcessingJob,
                           transition: str = "cut", transition_duration: float = 1.0,
                           preset: str = "youtube_1080p", trim_map: dict = None,
-                          encoder: str = "software") -> str:
+                          encoder: str = "software",
+                          audio_mix_map: dict = None,
+                          voice_effects_preset_id: str = None,
+                          voice_effects_settings: dict = None,
+                          normalize_first: bool = True) -> str:
         """Concatenate multiple videos with optional transitions and trim settings"""
         if not video_paths:
             raise ValueError("No video files provided")
         
         trim_map = trim_map or {}
+        audio_mix_map = audio_mix_map or {}
         
         # Get total duration (accounting for trim)
         total_duration = 0
@@ -702,16 +743,28 @@ class VideoProcessor:
         preset_config = OUTPUT_PRESETS.get(preset, OUTPUT_PRESETS["youtube_1080p"])
         
         if transition == "cut" or len(video_paths) == 1:
-            return self._concat_cut(video_paths, output_path, job, preset_config, total_duration, trim_map, encoder)
+            return self._concat_cut(
+                video_paths, output_path, job, preset_config, total_duration,
+                trim_map, encoder,
+                audio_mix_map, voice_effects_preset_id, voice_effects_settings,
+                normalize_first
+            )
         else:
             return self._concat_with_transition(video_paths, output_path, job, transition, 
-                                                transition_duration, preset_config, total_duration, trim_map, encoder)
+                                                transition_duration, preset_config, total_duration, trim_map, encoder,
+                                                audio_mix_map, voice_effects_preset_id, voice_effects_settings,
+                                                normalize_first)
     
     def _concat_cut(self, video_paths: list[str], output_path: str, job: ProcessingJob, 
                     preset_config: dict, total_duration: float, trim_map: dict = None,
-                    encoder: str = "software") -> str:
+                    encoder: str = "software",
+                    audio_mix_map: dict = None,
+                    voice_effects_preset_id: str = None,
+                    voice_effects_settings: dict = None,
+                    normalize_first: bool = True) -> str:
         """Concatenate videos with simple cut (no transition), applying trim settings"""
         trim_map = trim_map or {}
+        audio_mix_map = audio_mix_map or {}
         
         first_info = self.get_video_info(video_paths[0])
         if first_info:
@@ -767,13 +820,39 @@ class VideoProcessor:
             duration = input_durations[i]
             
             video_filter = f"[{i}:v]{scale_filter},setsar=1,fps=30,trim=duration={duration},setpts=PTS-STARTPTS"
+            filter_parts.append(f"{video_filter}[v{i}]")
+
             if info.has_audio:
-                audio_filter = f"[{i}:a]aresample=async=1,atrim=duration={duration},asetpts=PTS-STARTPTS"
+                audio_mix = audio_mix_map.get(video_paths[i], [])
+                if audio_mix:
+                    audio_filter_str, audio_label = self._build_audio_mix_filter(
+                        i, audio_mix, duration=duration,
+                        async_resample=True,
+                        voice_effects_preset_id=voice_effects_preset_id,
+                        voice_effects_settings=voice_effects_settings,
+                        normalize_first=normalize_first
+                    )
+                    if audio_label != f"a{i}":
+                        audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")
+                    filter_parts.append(audio_filter_str)
+                elif len(info.audio_tracks) > 1:
+                    default_mix = [{"track_index": t.track_index, "volume": 1.0} for t in info.audio_tracks]
+                    audio_filter_str, audio_label = self._build_audio_mix_filter(
+                        i, default_mix, duration=duration,
+                        async_resample=True,
+                        voice_effects_preset_id=voice_effects_preset_id,
+                        voice_effects_settings=voice_effects_settings,
+                        normalize_first=normalize_first
+                    )
+                    if audio_label != f"a{i}":
+                        audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")
+                    filter_parts.append(audio_filter_str)
+                else:
+                    audio_filter = f"[{i}:a]aresample=async=1,atrim=duration={duration},asetpts=PTS-STARTPTS"
+                    filter_parts.append(f"{audio_filter}[a{i}]")
             else:
                 audio_filter = f"anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration={duration},asetpts=PTS-STARTPTS"
-            
-            filter_parts.append(f"{video_filter}[v{i}]")
-            filter_parts.append(f"{audio_filter}[a{i}]")
+                filter_parts.append(f"{audio_filter}[a{i}]")
         
         # Concatenate all scaled videos
         concat_inputs = "".join([f"[v{i}]" for i in range(n)])
@@ -812,9 +891,14 @@ class VideoProcessor:
     def _concat_with_transition(self, video_paths: list[str], output_path: str, job: ProcessingJob,
                                 transition: str, transition_duration: float, preset_config: dict, 
                                 total_duration: float, trim_map: dict = None,
-                                encoder: str = "software") -> str:
+                                encoder: str = "software",
+                                audio_mix_map: dict = None,
+                                voice_effects_preset_id: str = None,
+                                voice_effects_settings: dict = None,
+                                normalize_first: bool = True) -> str:
         """Concatenate videos with transitions using complex filtergraph, with trim support"""
         trim_map = trim_map or {}
+        audio_mix_map = audio_mix_map or {}
         n = len(video_paths)
         
         # Build input arguments with trim_start via -ss
@@ -843,6 +927,11 @@ class VideoProcessor:
         
         # Build filter complex
         filter_parts = []
+        def _append_filter(part: str) -> None:
+            if not part:
+                return
+            part = part.rstrip(";") + ";"
+            filter_parts.append(part)
         
         # Scale all inputs to same size - use FIT mode (no stretch, letterbox if needed)
         first_info = self.get_video_info(video_paths[0])
@@ -857,13 +946,39 @@ class VideoProcessor:
             duration = input_durations[i]
             
             video_filter = f"[{i}:v]{scale_filter},setsar=1,fps=30,trim=duration={duration},setpts=PTS-STARTPTS"
+            _append_filter(f"{video_filter}[v{i}]")
+
             if info.has_audio:
-                audio_filter = f"[{i}:a]aresample=async=1:first_pts=0,atrim=duration={duration},asetpts=PTS-STARTPTS"
+                audio_mix = audio_mix_map.get(video_paths[i], [])
+                if audio_mix:
+                    audio_filter_str, audio_label = self._build_audio_mix_filter(
+                        i, audio_mix, duration=duration,
+                        async_resample=True,
+                        voice_effects_preset_id=voice_effects_preset_id,
+                        voice_effects_settings=voice_effects_settings,
+                        normalize_first=normalize_first
+                    )
+                    if audio_label != f"a{i}":
+                        audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")
+                    _append_filter(audio_filter_str)
+                elif len(info.audio_tracks) > 1:
+                    default_mix = [{"track_index": t.track_index, "volume": 1.0} for t in info.audio_tracks]
+                    audio_filter_str, audio_label = self._build_audio_mix_filter(
+                        i, default_mix, duration=duration,
+                        async_resample=True,
+                        voice_effects_preset_id=voice_effects_preset_id,
+                        voice_effects_settings=voice_effects_settings,
+                        normalize_first=normalize_first
+                    )
+                    if audio_label != f"a{i}":
+                        audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")
+                    _append_filter(audio_filter_str)
+                else:
+                    audio_filter = f"[{i}:a]aresample=async=1:first_pts=0,atrim=duration={duration},asetpts=PTS-STARTPTS"
+                    _append_filter(f"{audio_filter}[a{i}]")
             else:
                 audio_filter = f"anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration={duration},asetpts=PTS-STARTPTS"
-            
-            filter_parts.append(f"{video_filter}[v{i}];")
-            filter_parts.append(f"{audio_filter}[a{i}];")
+                _append_filter(f"{audio_filter}[a{i}]")
         
         # Apply transitions
         transition_map = {
@@ -892,20 +1007,17 @@ class VideoProcessor:
 
                 offset += input_durations[i - 1] - pair_duration
 
-                filter_parts.append(
-                    f"[{prev_v}][{curr_v}]xfade=transition={transition_name}:duration={pair_duration}:offset={offset}[{out_v}];"
+                _append_filter(
+                    f"[{prev_v}][{curr_v}]xfade=transition={transition_name}:duration={pair_duration}:offset={offset}[{out_v}]"
                 )
-                filter_parts.append(f"[{prev_a}][{curr_a}]acrossfade=d={pair_duration}[{out_a}];")
+                _append_filter(f"[{prev_a}][{curr_a}]acrossfade=d={pair_duration}[{out_a}]")
 
                 prev_v = out_v
                 prev_a = out_a
         else:
             raise ValueError(f"Unsupported transition: {transition}")
         
-        filter_complex = "".join(filter_parts)
-        # Remove trailing semicolon
-        if filter_complex.endswith(";"):
-            filter_complex = filter_complex[:-1]
+        filter_complex = "".join(filter_parts).rstrip(";")
         
         cmd = [FFMPEG_PATH, "-y"] + inputs
         cmd.extend(["-filter_complex", filter_complex])
@@ -1378,7 +1490,9 @@ class VideoProcessor:
                             subscribe_interval: float = 300,
                             subscribe_duration: float = 8,
                             audio_mix_map: dict = None,
-                            voice_effects_preset_id: str = None) -> str:
+                            voice_effects_preset_id: str = None,
+                            voice_effects_settings: dict = None,
+                            normalize_first: bool = True) -> str:
         """
         Render the full single-video pipeline in one FFmpeg pass.
         
@@ -1387,6 +1501,8 @@ class VideoProcessor:
                            Each value is a list of {track_index, volume, mute, solo, trackType}
                            If None or empty for a video, all tracks mixed at 1.0 volume.
             voice_effects_preset_id: Optional voice effects preset ID to apply to voice-tagged tracks.
+            voice_effects_settings: Optional custom voice effects settings (inline editor overrides).
+            normalize_first: Whether to normalize tracks before applying volume (disable when LUFS auto-level is used).
         """
         if not video_paths:
             raise ValueError("No video files provided")
@@ -1491,29 +1607,31 @@ class VideoProcessor:
                 # Get audio mix settings for this video
                 audio_mix = audio_mix_map.get(path, [])
                 
-                if audio_mix and len(info.audio_tracks) > 1:
-                    # Multi-track mixing with custom levels
+                if audio_mix:
+                    # Use provided mix settings even if ffprobe sees a single track
                     audio_filter_str, audio_label = self._build_audio_mix_filter(
-                        i, audio_mix, duration=duration, 
+                        i, audio_mix, duration=duration,
                         async_resample=True,
-                        voice_effects_preset_id=voice_effects_preset_id
+                        voice_effects_preset_id=voice_effects_preset_id,
+                        voice_effects_settings=voice_effects_settings,
+                        normalize_first=normalize_first
                     )
                     # The _build_audio_mix_filter returns a complete filter with output label
                     # But we need to integrate with our naming scheme
-                    # Split the filter and rename the output
                     if audio_label != f"a{i}":
-                        # Replace the output label in the filter
                         audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")
                     filter_parts.append(audio_filter_str)
                 else:
-                    # Single track or no mix settings - use default (first track or mix all)
-                    if len(info.audio_tracks) > 1 and not audio_mix:
+                    # No mix settings - use default (first track or mix all)
+                    if len(info.audio_tracks) > 1:
                         # Mix all tracks at 1.0 volume by default
                         default_mix = [{"track_index": t.track_index, "volume": 1.0} for t in info.audio_tracks]
                         audio_filter_str, audio_label = self._build_audio_mix_filter(
                             i, default_mix, duration=duration,
                             async_resample=True,
-                            voice_effects_preset_id=voice_effects_preset_id
+                            voice_effects_preset_id=voice_effects_preset_id,
+                            voice_effects_settings=voice_effects_settings,
+                            normalize_first=normalize_first
                         )
                         if audio_label != f"a{i}":
                             audio_filter_str = audio_filter_str.replace(f"[{audio_label}]", f"[a{i}]")

@@ -2,6 +2,7 @@
 Flask API for EditFlow application
 """
 import os
+import json
 import threading
 import uuid
 import hashlib
@@ -963,9 +964,15 @@ def generate_audio_preview():
     start_time = float(data.get('start_time', 0))
     duration = float(data.get('duration', 15))
     voice_effects_preset_id = data.get('voice_effects_preset_id')
+    voice_effects_settings = data.get('voice_effects_settings')  # Custom settings from inline editor
+    normalize_first = bool(data.get('normalize_first', True))
+    normalize_first = bool(data.get('normalize_first', True))
     
-    # Generate unique output path
-    voice_sig = voice_effects_preset_id or "none"
+    # Generate unique output path - include settings in signature if provided
+    if voice_effects_settings:
+        voice_sig = hashlib.md5(json.dumps(voice_effects_settings, sort_keys=True).encode()).hexdigest()[:8]
+    else:
+        voice_sig = voice_effects_preset_id or "none"
     mix_signature = hashlib.md5(f"{audio_mix}|{voice_sig}".encode()).hexdigest()[:8]
     signature = hashlib.md5(f"{video_path}|{start_time}".encode()).hexdigest()[:8]
     output_path = TEMP_DIR / f"audio_preview_{signature}_{mix_signature}.m4a"
@@ -976,7 +983,9 @@ def generate_audio_preview():
             audio_mix=audio_mix,
             start_time=start_time,
             duration=duration,
-            voice_effects_preset_id=voice_effects_preset_id
+            voice_effects_preset_id=voice_effects_preset_id,
+            voice_effects_settings=voice_effects_settings,
+            normalize_first=normalize_first
         ):
             return send_file(str(output_path), mimetype='audio/mp4')
         else:
@@ -1163,14 +1172,21 @@ def generate_voice_effects_preview():
     if not Path(video_path).exists():
         return jsonify({"error": "File not found"}), 404
     
-    # Get preset or custom settings
+    # Get preset - custom settings take priority over preset_id
+    custom_settings = data.get('settings')
     preset_id = data.get('preset_id')
-    if preset_id:
+    
+    if custom_settings:
+        # Use custom settings directly (from inline editor)
+        preset = custom_settings
+    elif preset_id:
+        # Look up preset by ID
         preset = voice_effects_processor.get_preset(preset_id)
         if not preset:
             return jsonify({"error": "Voice effects preset not found"}), 404
     else:
-        preset = data.get('settings', {})
+        # No settings provided - use default (no effects)
+        preset = {}
     
     # Get all voice track indices (or fall back to single track)
     voice_track_indices = data.get('voice_track_indices', [])
@@ -1179,6 +1195,9 @@ def generate_voice_effects_preview():
         track_index = int(data.get('track_index', 0))
         voice_track_indices = [track_index]
     
+    # Get volume settings for each voice track (optional - defaults to 1.0 for all)
+    voice_track_volumes = data.get('voice_track_volumes', [])
+    
     start_time = float(data.get('start_time', 0))
     duration = float(data.get('duration', 15))
     
@@ -1186,6 +1205,7 @@ def generate_voice_effects_preview():
         video_path=video_path,
         preset=preset,
         voice_track_indices=voice_track_indices,
+        voice_track_volumes=voice_track_volumes,
         start_time=start_time,
         duration=duration
     )
@@ -1193,6 +1213,16 @@ def generate_voice_effects_preview():
     if output_path:
         return send_file(output_path, mimetype='audio/mp4')
     return jsonify({"error": "Failed to generate voice effects preview"}), 500
+
+
+@app.route('/api/voice-effects/presets/reset', methods=['POST'])
+def reset_voice_effects_presets():
+    """Reset all voice effects presets to defaults (removes custom presets)"""
+    try:
+        voice_effects_processor.reset_defaults()
+        return jsonify({"success": True, "message": "Presets reset to defaults"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/voice-effects/filter-chain', methods=['POST'])
@@ -1231,6 +1261,39 @@ def process_single_video():
     for path in video_paths:
         if not Path(path).exists():
             return jsonify({"error": f"File not found: {path}"}), 400
+
+    # Get trim settings (list of {path, trim_start, trim_end})
+    trim_settings = data.get('trim_settings', [])
+    trim_map = {t['path']: t for t in trim_settings if isinstance(t, dict) and t.get('path')}
+
+    # Get audio mix settings (list of {path, tracks: [...]})
+    audio_mix_settings = data.get('audio_mix_settings', [])
+    audio_mix_map = {}
+    for item in audio_mix_settings:
+        if isinstance(item, dict) and item.get('path'):
+            audio_mix_map[item['path']] = item.get('tracks', [])
+
+    # Get trim settings (list of {path, trim_start, trim_end})
+    trim_settings = data.get('trim_settings', [])
+    trim_map = {t['path']: t for t in trim_settings if isinstance(t, dict) and t.get('path')}
+
+    # Get audio mix settings (list of {path, tracks: [...]})
+    audio_mix_settings = data.get('audio_mix_settings', [])
+    audio_mix_map = {}
+    for item in audio_mix_settings:
+        if isinstance(item, dict) and item.get('path'):
+            audio_mix_map[item['path']] = item.get('tracks', [])
+
+    # Get trim settings (list of {path, trim_start, trim_end})
+    trim_settings = data.get('trim_settings', [])
+    trim_map = {t['path']: t for t in trim_settings if isinstance(t, dict) and t.get('path')}
+
+    # Get audio mix settings (list of {path, tracks: [...]})
+    audio_mix_settings = data.get('audio_mix_settings', [])
+    audio_mix_map = {}
+    for item in audio_mix_settings:
+        if isinstance(item, dict) and item.get('path'):
+            audio_mix_map[item['path']] = item.get('tracks', [])
     
     # Get trim settings (list of {path, trim_start, trim_end})
     trim_settings = data.get('trim_settings', [])
@@ -1238,10 +1301,15 @@ def process_single_video():
     
     # Get audio mix settings (list of {path, tracks: [{track_index, volume, mute, solo}]})
     audio_mix_settings = data.get('audio_mix_settings', [])
-    audio_mix_map = {a['path']: a.get('tracks', []) for a in audio_mix_settings}
+    audio_mix_map = {}
+    for item in audio_mix_settings:
+        if isinstance(item, dict) and item.get('path'):
+            audio_mix_map[item['path']] = item.get('tracks', [])
     
     # Get voice effects preset ID
     voice_effects_preset_id = data.get('voice_effects_preset_id')
+    voice_effects_settings = data.get('voice_effects_settings')  # Custom settings from inline editor
+    normalize_first = bool(data.get('normalize_first', True))
     
     profile_id = data.get('profile_id')
     transition = data.get('transition', 'cut')
@@ -1306,7 +1374,9 @@ def process_single_video():
                 subscribe_interval=subscribe_interval,
                 subscribe_duration=subscribe_duration,
                 audio_mix_map=audio_mix_map,
-                voice_effects_preset_id=voice_effects_preset_id
+                voice_effects_preset_id=voice_effects_preset_id,
+                voice_effects_settings=voice_effects_settings,
+                normalize_first=normalize_first
             )
 
             job.output_files = [final_path]
@@ -1343,6 +1413,17 @@ def process_episodic():
     for path in video_paths:
         if not Path(path).exists():
             return jsonify({"error": f"File not found: {path}"}), 400
+
+    # Get trim settings (list of {path, trim_start, trim_end})
+    trim_settings = data.get('trim_settings', [])
+    trim_map = {t['path']: t for t in trim_settings if isinstance(t, dict) and t.get('path')}
+
+    # Get audio mix settings (list of {path, tracks: [...]})
+    audio_mix_settings = data.get('audio_mix_settings', [])
+    audio_mix_map = {}
+    for item in audio_mix_settings:
+        if isinstance(item, dict) and item.get('path'):
+            audio_mix_map[item['path']] = item.get('tracks', [])
     
     profile_id = data.get('profile_id')
     transition = data.get('transition', 'cut')
@@ -1353,6 +1434,9 @@ def process_episodic():
     output_prefix = data.get('output_prefix', 'Episode')
     output_dir_input = data.get('output_dir')
     apply_subscribe = data.get('apply_subscribe', False)
+    voice_effects_preset_id = data.get('voice_effects_preset_id')
+    voice_effects_settings = data.get('voice_effects_settings')
+    normalize_first = bool(data.get('normalize_first', True))
 
     try:
         output_dir = _resolve_output_dir(output_dir_input)
@@ -1367,8 +1451,17 @@ def process_episodic():
         try:
             job.status = "processing"
             
-            # Step 1: Concatenate all videos first (if multiple)
-            if len(video_paths) > 1:
+            # Step 1: Preprocess/concatenate (if multiple or if audio/trim effects are needed)
+            has_trim = any(
+                float(trim_map.get(p, {}).get('trim_start', 0)) > 0 or
+                float(trim_map.get(p, {}).get('trim_end', 0)) > 0
+                for p in video_paths
+            )
+            has_audio_mix = bool(audio_mix_map)
+            has_voice_fx = bool(voice_effects_preset_id or voice_effects_settings)
+
+            created_concat = False
+            if len(video_paths) > 1 or has_trim or has_audio_mix or has_voice_fx:
                 job.current_step = "Joining all videos..."
                 job.current_step_num = 1
                 
@@ -1377,9 +1470,15 @@ def process_episodic():
                     video_paths, concat_output, job,
                     transition=transition,
                     transition_duration=transition_duration,
-                    preset=preset
+                    preset=preset,
+                    trim_map=trim_map,
+                    audio_mix_map=audio_mix_map,
+                    voice_effects_preset_id=voice_effects_preset_id,
+                    voice_effects_settings=voice_effects_settings,
+                    normalize_first=normalize_first
                 )
                 source_video = concat_output
+                created_concat = True
             else:
                 source_video = video_paths[0]
             
@@ -1397,7 +1496,7 @@ def process_episodic():
             )
             
             # Clean up concat if we made one
-            if len(video_paths) > 1 and Path(source_video).exists():
+            if created_concat and Path(source_video).exists():
                 Path(source_video).unlink()
             
             # Step 3: Apply intro/outro/subscribe to each episode

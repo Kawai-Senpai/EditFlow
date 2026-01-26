@@ -10,12 +10,14 @@ from .config import PROFILES_DIR
 
 
 # Track types for auto-leveling
+# Auto-level values are relative to voice (1.0 = same level as voice after normalization)
+# These are used when no LUFS analysis is available
 TRACK_TYPES = {
-    "voice": {"name": "Voice/Commentary", "auto_level": 1.0},
-    "game_audio": {"name": "Game Audio", "auto_level": 0.6},
-    "music": {"name": "Background Music", "auto_level": 0.3},
-    "sfx": {"name": "Sound Effects", "auto_level": 0.5},
-    "other": {"name": "Other", "auto_level": 0.5}
+    "voice": {"name": "Voice/Commentary", "auto_level": 1.0},     # Full volume - primary content
+    "game_audio": {"name": "Game Audio", "auto_level": 0.25},    # 12 dB reduction - background, shouldn't compete
+    "music": {"name": "Background Music", "auto_level": 0.20},   # 14 dB reduction - subtle ambience
+    "sfx": {"name": "Sound Effects", "auto_level": 0.40},        # 8 dB reduction - occasional, not competing
+    "other": {"name": "Other", "auto_level": 0.40}               # Default - treat like sfx
 }
 
 
@@ -187,8 +189,15 @@ class AudioPresetManager:
         Calculate auto-leveled volume settings based on actual LUFS analysis and track types.
         
         The algorithm:
-        1. Normalize all tracks to a common reference level
-        2. Then apply type-based adjustments (voice louder, music quieter, etc.)
+        1. Analyze LUFS of all tracks
+        2. Calculate gain to bring all tracks to the SAME reference level (-16 LUFS)
+        3. THEN apply type-based relative reductions (voice=1.0, game=0.25, etc.)
+        
+        This approach:
+        - First equalizes all tracks to the same loudness
+        - Then applies type-based reduction for mix balance
+        
+        Final volume = normalization_gain × type_reduction
         
         Args:
             track_analysis: List of dicts with {track_name, track_index, loudness_lufs, peak_db}
@@ -198,39 +207,54 @@ class AudioPresetManager:
             Dict mapping track name to recommended volume (0.0 - 2.0)
         """
         if not track_analysis:
+            # No analysis available, use type-based fallback
             return self.calculate_auto_levels(track_types)
         
-        # Target LUFS levels for each track type
-        # Voice is the reference (-16 LUFS broadcast standard)
-        TARGET_LUFS = {
-            "voice": -16.0,      # Primary content - loudest
-            "game_audio": -22.0, # 6 dB below voice
-            "music": -26.0,      # 10 dB below voice
-            "sfx": -20.0,        # 4 dB below voice
-            "other": -20.0       # Default
-        }
+        # Reference level to normalize all tracks to (before type-based adjustment)
+        REFERENCE_LUFS = -16.0
         
         result = {}
         
-        for track in track_analysis:
-            track_name = track.get("track_name", f"Track {track.get('track_index', 0)}")
-            current_lufs = track.get("loudness_lufs", -23.0)  # Default EBU R128
+        for track_info in track_analysis:
+            track_name = track_info.get("track_name", f"Track {track_info.get('track_index', 0) + 1}")
+            current_lufs = track_info.get("loudness_lufs")
+            
+            # Skip tracks with no valid LUFS reading
+            if current_lufs is None or current_lufs < -70:
+                # Silent or very quiet track - use type-based level only
+                track_type = track_types.get(track_name, "other")
+                type_info = TRACK_TYPES.get(track_type, TRACK_TYPES["other"])
+                result[track_name] = type_info["auto_level"]
+                continue
+            
+            # Step 1: Calculate gain needed to reach reference level
+            # gain_db = target - current
+            # If current is -23 LUFS, we need +7 dB to reach -16 LUFS
+            gain_db = REFERENCE_LUFS - current_lufs
+            
+            # Convert dB to linear gain
+            # 10^(gain_db / 20)
+            normalization_gain = 10 ** (gain_db / 20.0)
+            
+            # Step 2: Get type-based relative reduction
             track_type = track_types.get(track_name, "other")
+            type_info = TRACK_TYPES.get(track_type, TRACK_TYPES["other"])
+            type_reduction = type_info["auto_level"]
             
-            target_lufs = TARGET_LUFS.get(track_type, -20.0)
+            # Step 3: Combine normalization gain with type reduction
+            final_volume = normalization_gain * type_reduction
             
-            # Calculate the gain needed
-            # Positive = boost, Negative = reduce
-            gain_db = target_lufs - current_lufs
+            # Clamp to reasonable range (0.0 - 2.0)
+            final_volume = max(0.0, min(2.0, final_volume))
             
-            # Convert dB to linear volume multiplier
-            # volume = 10^(gain_db/20)
-            volume = 10 ** (gain_db / 20.0)
-            
-            # Clamp to reasonable range (0.1 to 2.0)
-            volume = max(0.1, min(2.0, volume))
-            
-            result[track_name] = round(volume, 2)
+            result[track_name] = round(final_volume, 3)
+        
+        # Handle any tracks in track_types but not in analysis
+        for track_name in track_types:
+            if track_name not in result:
+                track_type = track_types.get(track_name, "other")
+                type_info = TRACK_TYPES.get(track_type, TRACK_TYPES["other"])
+                result[track_name] = type_info["auto_level"]
         
         return result
     
