@@ -591,7 +591,7 @@ function renderAudioMixerContent() {
                     <div class="audio-volume-slider">
                         <input type="range" class="audio-volume-input" 
                                data-track="${trackName}" 
-                               min="0" max="200" value="${volumePercent}"
+                               min="0" max="1000" value="${volumePercent}"
                                title="Volume: ${volumePercent}%">
                         <span class="audio-volume-value">${volumePercent}%</span>
                     </div>
@@ -730,7 +730,7 @@ function renderAudioMixerContent() {
                                 <div class="audio-track-controls">
                                     <input type="range" class="audio-volume-input-file" 
                                            data-file="${realIndex}" data-track-index="${i}"
-                                           min="0" max="200" value="${volumePercent}">
+                                           min="0" max="1000" value="${volumePercent}">
                                     <span class="audio-volume-value">${volumePercent}%</span>
                                     <button class="audio-btn-sm ${fileSettings.mute ? 'active' : ''}" 
                                             data-file="${realIndex}" data-track-index="${i}" data-action="mute">M</button>

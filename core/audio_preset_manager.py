@@ -198,7 +198,7 @@ class AudioPresetManager:
             track_types: Dict mapping track name to track type string
             
         Returns:
-            Dict mapping track name to recommended volume (0.0 - 2.0)
+            Dict mapping track name to recommended volume (0.0 - 10.0)
         """
         if not track_analysis:
             # No analysis available, use type-based fallback
@@ -235,8 +235,9 @@ class AudioPresetManager:
             # Step 3: Combine normalization gain with type reduction
             final_volume = normalization_gain * type_reduction
 
-            # Clamp to reasonable range (0.0 - 2.0)
-            final_volume = max(0.0, min(2.0, final_volume))
+            # Clamp to reasonable range (0.0 - 10.0)
+            # Allow up to 1000% for very quiet audio that needs significant boosting
+            final_volume = max(0.0, min(10.0, final_volume))
 
             result[track_name] = round(final_volume, 3)
 
