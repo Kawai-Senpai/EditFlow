@@ -1147,10 +1147,28 @@ function buildAudioMixForFile(file) {
         return null;
     }
 
+    // When applyToAll is true, ALWAYS read from globalSettings (same source as preview)
+    // This prevents stale file.audio_mix from causing render vs preview mismatch
+    if (state.audioMixer.applyToAll) {
+        return file.audio_tracks.map((track, i) => {
+            const trackName = getTrackDisplayName(track, i);
+            const settings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false, trackType: 'other' };
+            return {
+                track_index: i,
+                volume: settings.volume,
+                mute: settings.mute,
+                solo: settings.solo,
+                trackType: settings.trackType || 'other'
+            };
+        });
+    }
+
+    // Per-file mode: use file-specific audio_mix if available
     if (file.audio_mix && file.audio_mix.length) {
         return file.audio_mix;
     }
 
+    // Fallback: build from globalSettings
     return file.audio_tracks.map((track, i) => {
         const trackName = getTrackDisplayName(track, i);
         const settings = state.audioMixer.globalSettings[trackName] || { volume: 1.0, mute: false, solo: false, trackType: 'other' };
@@ -2867,6 +2885,11 @@ async function startProcessing() {
         apply_subscribe: applySubscribe,
         subscribe_interval: subscribeInterval
     };
+    
+    // Debug: Log the audio mix settings being sent to the backend
+    console.log('[Render] audio_mix_settings:', JSON.stringify(data.audio_mix_settings, null, 2));
+    console.log('[Render] normalize_first:', data.normalize_first);
+    console.log('[Render] globalSettings:', JSON.stringify(state.audioMixer.globalSettings, null, 2));
     
     if (mode === 'episodic') {
         data.episode_duration = parseFloat(document.getElementById('episode-duration').value) * 60;

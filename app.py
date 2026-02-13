@@ -1282,45 +1282,19 @@ def process_single_video():
     trim_settings = data.get('trim_settings', [])
     trim_map = {t['path']: t for t in trim_settings if isinstance(t, dict) and t.get('path')}
 
-    # Get audio mix settings (list of {path, tracks: [...]})
-    audio_mix_settings = data.get('audio_mix_settings', [])
-    audio_mix_map = {}
-    for item in audio_mix_settings:
-        if isinstance(item, dict) and item.get('path'):
-            audio_mix_map[item['path']] = item.get('tracks', [])
-
-    # Get trim settings (list of {path, trim_start, trim_end})
-    trim_settings = data.get('trim_settings', [])
-    trim_map = {t['path']: t for t in trim_settings if isinstance(t, dict) and t.get('path')}
-
-    # Get audio mix settings (list of {path, tracks: [...]})
-    audio_mix_settings = data.get('audio_mix_settings', [])
-    audio_mix_map = {}
-    for item in audio_mix_settings:
-        if isinstance(item, dict) and item.get('path'):
-            audio_mix_map[item['path']] = item.get('tracks', [])
-
-    # Get trim settings (list of {path, trim_start, trim_end})
-    trim_settings = data.get('trim_settings', [])
-    trim_map = {t['path']: t for t in trim_settings if isinstance(t, dict) and t.get('path')}
-
-    # Get audio mix settings (list of {path, tracks: [...]})
-    audio_mix_settings = data.get('audio_mix_settings', [])
-    audio_mix_map = {}
-    for item in audio_mix_settings:
-        if isinstance(item, dict) and item.get('path'):
-            audio_mix_map[item['path']] = item.get('tracks', [])
-    
-    # Get trim settings (list of {path, trim_start, trim_end})
-    trim_settings = data.get('trim_settings', [])
-    trim_map = {t['path']: t for t in trim_settings}
-    
     # Get audio mix settings (list of {path, tracks: [{track_index, volume, mute, solo}]})
     audio_mix_settings = data.get('audio_mix_settings', [])
     audio_mix_map = {}
     for item in audio_mix_settings:
         if isinstance(item, dict) and item.get('path'):
             audio_mix_map[item['path']] = item.get('tracks', [])
+    
+    # Debug: Log audio mix map for render
+    print(f"[ProcessSingle] audio_mix_map keys: {list(audio_mix_map.keys())}")
+    for path_key, tracks in audio_mix_map.items():
+        track_summary = [f"t{t.get('track_index', '?')}@{t.get('volume', '?')}" for t in tracks] if tracks else ['EMPTY']
+        print(f"[ProcessSingle]   {path_key}: {track_summary}")
+    print(f"[ProcessSingle] video_paths: {video_paths}")
     
     # Get voice effects preset ID
     voice_effects_preset_id = data.get('voice_effects_preset_id')

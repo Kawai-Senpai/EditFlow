@@ -1618,6 +1618,8 @@ class VideoProcessor:
                 
                 if audio_mix:
                     # Use provided mix settings even if ffprobe sees a single track
+                    track_vols = [f"t{t.get('track_index','?')}@{t.get('volume','?')}" for t in audio_mix]
+                    print(f"[ProcessSinglePass] Video {i} ({path}): CUSTOM audio mix → {track_vols}")
                     audio_filter_str, audio_label = self._build_audio_mix_filter(
                         i, audio_mix, duration=duration,
                         async_resample=True,
@@ -1634,6 +1636,7 @@ class VideoProcessor:
                     # No mix settings - use default (first track or mix all)
                     if len(info.audio_tracks) > 1:
                         # Mix all tracks at 1.0 volume by default
+                        print(f"[ProcessSinglePass] Video {i} ({path}): NO custom mix, using DEFAULT 1.0 for {len(info.audio_tracks)} tracks")
                         default_mix = [{"track_index": t.track_index, "volume": 1.0} for t in info.audio_tracks]
                         audio_filter_str, audio_label = self._build_audio_mix_filter(
                             i, default_mix, duration=duration,
