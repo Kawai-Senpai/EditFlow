@@ -416,7 +416,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 - 🌐 Website: [ranitbhowmick.com](https://ranitbhowmick.com)
 - 💼 GitHub: [@KawaiSenpai](https://github.com/KawaiSenpai)
-- 🎮 YouTube: [@RanitIsLive](https://www.youtube.com/@RanitIsLive) — *Videos on this channel are edited using EditFlow!*
+- 🎮 YouTube: [@RanitIsLive](https://www.youtube.com/@RanitIsLive) - *Videos on this channel are edited using EditFlow!*
 
 ---
 
