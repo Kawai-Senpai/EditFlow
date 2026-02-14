@@ -53,9 +53,22 @@ def _load_font(font_path: str | None, font_family: str | None, size: int) -> Ima
 
 def _measure_text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont,
                         stroke_width: int, letter_spacing: float) -> float:
+    """Measure text width for layout (wrapping & alignment).
+
+    Stroke is intentionally excluded from the measurement so that text
+    wrapping and centering match CSS behaviour where *-webkit-text-stroke*
+    does not affect the layout flow.
+    """
+    if not text:
+        return 0.0
+    # When there is no custom letter-spacing, use Pillow's native
+    # whole-string measurement which accounts for kerning.
+    if letter_spacing <= 0:
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=0)
+        return float(bbox[2] - bbox[0])
     width = 0.0
     for idx, ch in enumerate(text):
-        bbox = draw.textbbox((0, 0), ch, font=font, stroke_width=stroke_width)
+        bbox = draw.textbbox((0, 0), ch, font=font, stroke_width=0)
         ch_w = bbox[2] - bbox[0]
         width += ch_w
         if idx < len(text) - 1:
@@ -77,7 +90,9 @@ def _draw_text_with_spacing(draw: ImageDraw.ImageDraw, position: tuple[int, int]
             stroke_fill=stroke_fill,
             stroke_width=stroke_width,
         )
-        bbox = draw.textbbox((0, 0), ch, font=font, stroke_width=stroke_width)
+        # Advance by character width WITHOUT stroke so spacing matches CSS.
+        # CSS -webkit-text-stroke does not affect character advancement.
+        bbox = draw.textbbox((0, 0), ch, font=font, stroke_width=0)
         ch_w = bbox[2] - bbox[0]
         if idx < len(text) - 1:
             x += ch_w + letter_spacing
@@ -111,44 +126,65 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, 
 
 
 def _draw_text_layer(element: dict[str, Any], canvas_scale_x: float, canvas_scale_y: float) -> Image.Image:
+    """Render a text element onto an RGBA layer.
+
+    The layer size equals the element's logical size (after canvas scaling)
+    so that it acts as the clip boundary – matching CSS ``overflow: hidden``
+    on the preview ``.studio-element``.
+
+    Text measurement deliberately ignores stroke width so that wrapping and
+    alignment behave the same way as CSS where ``-webkit-text-stroke`` does
+    not participate in the layout flow.
+    """
     text = element.get("text", "")
-    width = max(1, int(element.get("width", 100) * canvas_scale_x))
-    height = max(1, int(element.get("height", 50) * canvas_scale_y))
-    font_size = max(8, int(element.get("fontSize", 32) * (canvas_scale_y + canvas_scale_x) / 2))
+    el_width = max(1, int(element.get("width", 100) * canvas_scale_x))
+    el_height = max(1, int(element.get("height", 50) * canvas_scale_y))
+    avg_scale = (canvas_scale_x + canvas_scale_y) / 2
+    font_size = max(8, int(element.get("fontSize", 32) * avg_scale))
     font_family = element.get("fontFamily")
     font_path = element.get("fontPath")
     fill = element.get("fill", "#ffffff")
     stroke_fill = element.get("stroke", "#000000")
     fill_enabled = element.get("fillEnabled", True)
     stroke_enabled = element.get("strokeEnabled", True)
-    stroke_width = int(element.get("strokeWidth", 0)) if stroke_enabled else 0
+    stroke_width = max(0, int(element.get("strokeWidth", 0) * avg_scale)) if stroke_enabled else 0
     align = element.get("align", "left")
     line_height = float(element.get("lineHeight", 1.1))
-    letter_spacing = float(element.get("letterSpacing", 0)) * (canvas_scale_x + canvas_scale_y) / 2
+    letter_spacing = float(element.get("letterSpacing", 0)) * avg_scale
     opacity = float(element.get("opacity", 1))
 
-    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    # Add padding equal to stroke_width so edge strokes are not clipped
+    # inside the element region.  The paste position in
+    # render_studio_overlay compensates for this.
+    pad = stroke_width
+    layer_w = el_width + 2 * pad
+    layer_h = el_height + 2 * pad
+
+    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     font = _load_font(font_path, font_family, font_size)
 
-    lines = _wrap_text(draw, text, font, width, stroke_width, letter_spacing)
-    y = 0
+    # Wrap text to the *element* width (excluding stroke padding).
+    lines = _wrap_text(draw, text, font, el_width, stroke_width, letter_spacing)
+
+    fill_rgba = parse_hex_color(fill) + (255,) if fill_enabled else (0, 0, 0, 0)
+    stroke_rgba = parse_hex_color(stroke_fill) + (255,) if stroke_enabled else (0, 0, 0, 0)
+
+    y = pad  # start inside the padding region
     for line in lines:
         line_w = _measure_text_width(draw, line, font, stroke_width, letter_spacing)
         if align == "center":
-            x = (width - line_w) // 2
+            x = pad + (el_width - line_w) / 2
         elif align == "right":
-            x = max(0, width - line_w)
+            x = pad + max(0, el_width - line_w)
         else:
-            x = 0
+            x = pad
 
-        fill_rgba = parse_hex_color(fill) + (255,) if fill_enabled else (0, 0, 0, 0)
-        stroke_rgba = parse_hex_color(stroke_fill) + (255,) if stroke_enabled else (0, 0, 0, 0)
         if letter_spacing > 0:
             _draw_text_with_spacing(draw, (int(x), int(y)), line, font, fill_rgba, stroke_rgba, stroke_width, letter_spacing)
         else:
             draw.text(
-                (x, y),
+                (int(x), int(y)),
                 line,
                 font=font,
                 fill=fill_rgba,
@@ -210,6 +246,15 @@ def render_studio_overlay(base: Image.Image, spec: dict[str, Any]) -> Image.Imag
 
         if element_type == "text":
             layer = _draw_text_layer(element, scale_x, scale_y)
+            # The text layer includes stroke-width padding on every side.
+            # Shift the paste position so the *element* region still lines
+            # up with the user-specified (x, y).
+            stroke_enabled = element.get("strokeEnabled", True)
+            sw = element.get("strokeWidth", 0) if stroke_enabled else 0
+            avg_scale = (scale_x + scale_y) / 2
+            pad = max(0, int(sw * avg_scale))
+            x -= pad
+            y -= pad
         elif element_type == "image":
             layer = _draw_image_layer(element, scale_x, scale_y)
         else:

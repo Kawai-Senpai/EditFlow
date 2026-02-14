@@ -4843,7 +4843,23 @@ function renderStudioElements() {
             const stroke = element.stroke || '#000000';
             const strokeWidth = strokeEnabled ? (element.strokeWidth || 0) * scale : 0;
             text.style.webkitTextStroke = strokeWidth > 0 ? `${strokeWidth}px ${stroke}` : '0px transparent';
+            // Use paint-order so fill covers the inner half of the stroke,
+            // matching Pillow which paints stroke first then fill on top.
+            text.style.paintOrder = 'stroke fill';
             el.appendChild(text);
+
+            // Load the exact font file so the preview matches the backend.
+            if (element.fontPath) {
+                const fontObj = state.thumbnail.fonts.find(f => f.path === element.fontPath);
+                if (fontObj) {
+                    ensureFontLoaded(fontObj).then(cssFamily => {
+                        if (cssFamily && text.isConnected) {
+                            text.style.fontFamily = `'${cssFamily}', '${element.fontFamily || 'Inter'}', sans-serif`;
+                        }
+                    });
+                }
+            }
+
             if (element.type === 'text') {
                 el.addEventListener('dblclick', () => openStudioTextEditor(element.id));
             }

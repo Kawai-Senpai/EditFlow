@@ -113,7 +113,8 @@ def _draw_text_with_spacing(draw: ImageDraw.ImageDraw, position: tuple[int, int]
             stroke_fill=stroke_fill,
             stroke_width=stroke_width,
         )
-        bbox = draw.textbbox((0, 0), ch, font=font, stroke_width=stroke_width)
+        # Advance by character width WITHOUT stroke to match CSS spacing
+        bbox = draw.textbbox((0, 0), ch, font=font, stroke_width=0)
         ch_w = bbox[2] - bbox[0]
         if i < len(text) - 1:
             x += ch_w + letter_spacing

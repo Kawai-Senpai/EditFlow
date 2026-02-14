@@ -1955,6 +1955,7 @@ body {
     cursor: move;
     user-select: none;
     box-sizing: border-box;
+    overflow: hidden;
 }
 
 .studio-element.selected { border-color: var(--accent); }
@@ -1969,13 +1970,14 @@ body {
 .studio-text {
     width: 100%;
     height: 100%;
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-start;
-    padding: 2px;
+    display: block;
+    padding: 0;
     line-height: 1.1;
     color: var(--text-primary);
     white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    overflow: hidden;
 }
 
 .studio-text-editor {
